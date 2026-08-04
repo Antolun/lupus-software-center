@@ -1,4 +1,4 @@
-# 🐺 LupuS PiSiM (PiSi Market)
+# PiSiM (PiSi Market)
 
 A modern, high-performance Software Center built with **PyQt6** for the **LupuS Operating System**, supporting native **PiSi** package management and **Flatpak / Flathub** applications.
 
@@ -30,6 +30,8 @@ pisim/
 │   ├── mainwindow.py       # Main window & animated views (Discover, Category, Detail, Updates, Search)
 │   ├── widgets.py          # UI components (PisiAppCard, TrendingAppCard, PisiInstallWidget, ImageViewerDialog)
 │   └── assets/             # Branding icons and image resources
+├── LICENSE                 # License
+├── install.sh              # Installer 
 └── README.md               # Project documentation
 ```
 
@@ -48,29 +50,29 @@ pisim/
 
 ```bash
 # Via pip
-pip install PyQt6
-
-# Or via PiSi package manager on LupuS OS
-pisi install python3-pyqt6
+pip3 install PyQt6
 ```
 
 ---
 
-## 🚀 Running the Application
+## 🚀 Install/Uninstall Application
 
+### Install
 ```bash
-# Run PiSiM
+# Install
 python3 main.py
 ```
 
-### Force Language Override (Optional)
-
+### Uninstall
 ```bash
-# Force English
-LANG=en_US.UTF-8 python3 main.py
+# Uninstall
+sudo ./install.sh uninstall
+```
 
-# Force Turkish
-LANG=tr_TR.UTF-8 python3 main.py
+### Reinstall
+```bash
+# Reinstall
+sudo ./install.sh reinstall
 ```
 
 ---
