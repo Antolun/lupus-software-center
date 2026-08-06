@@ -28,6 +28,7 @@ pisim/
 │   ├── i18n.py             # Internationalization module (EN/TR auto-detection)
 │   ├── backend.py          # PiSi DB/CLI & Flatpak/FlatHub API backend manager
 │   ├── mainwindow.py       # Main window & animated views (Discover, Category, Detail, Updates, Search)
+│   ├── settings.py         # Application settings functions
 │   ├── widgets.py          # UI components (PisiAppCard, TrendingAppCard, PisiInstallWidget, ImageViewerDialog)
 │   └── assets/             # Branding icons and image resources
 ├── LICENSE                 # License
