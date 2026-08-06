@@ -13,18 +13,21 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QLineEdit, QScrollArea, QGridLayout, QStackedWidget,
     QFrame, QButtonGroup, QApplication, QMessageBox,
-    QProgressBar, QComboBox, QGraphicsOpacityEffect
+    QProgressBar, QComboBox, QGraphicsOpacityEffect, QCheckBox,
+    QSystemTrayIcon, QMenu
 )
 from PyQt6.QtCore import (
     Qt, QSize, pyqtSignal, QThread, QObject, QTimer,
     QPropertyAnimation, QParallelAnimationGroup, QEasingCurve
 )
 from PyQt6.QtGui import (
-    QIcon, QPixmap, QColor, QFont, QFontDatabase
+    QIcon, QPixmap, QColor, QFont, QFontDatabase, QDesktopServices,
+    QPainter, QPen
 )
 
 from .backend import PackageInfo, PisiBackend, LUPUS_CATEGORIES
-from .i18n import tr
+from .i18n import tr, I18n
+from .settings import SettingsManager
 from .widgets import (
     ThemeManager, PisiActionButton, PisiInstallWidget, PisiSidebarButton,
     TrendingAppCard, PisiAppCard, PisiStatsBox, PisiToggleRow, ImageViewerDialog,
@@ -147,8 +150,16 @@ class InstallWorker(QThread):
             if self.package_name.startswith("flatpak:"):
                 real_id = self.package_name.removeprefix("flatpak:")
                 import subprocess
+                is_inst = False
+                key = f"flatpak:{real_id}"
+                if key in self.backend._installed_packages and self.backend._installed_packages[key].installed:
+                    is_inst = True
+
                 if self.action == "install":
-                    cmd = ["flatpak", "install", "--noninteractive", "--assumeyes", real_id]
+                    if is_inst:
+                        cmd = ["flatpak", "update", "--noninteractive", "--assumeyes", real_id]
+                    else:
+                        cmd = ["flatpak", "install", "--noninteractive", "--assumeyes", real_id]
                 else:
                     cmd = ["flatpak", "uninstall", "--noninteractive", "--assumeyes", real_id]
 
@@ -186,13 +197,17 @@ class InstallWorker(QThread):
                     if self.action == "install":
                         if key in self.backend._available_packages:
                             self.backend._available_packages[key].installed = True
+                            self.backend._available_packages[key].has_update = False
                             self.backend._installed_packages[key] = self.backend._available_packages[key]
+                        if key in self.backend._installed_packages:
+                            self.backend._installed_packages[key].has_update = False
                         self.finished.emit(True, tr("installed_success", name=real_id))
                     else:
                         if key in self.backend._installed_packages:
                             del self.backend._installed_packages[key]
                         if key in self.backend._available_packages:
                             self.backend._available_packages[key].installed = False
+                            self.backend._available_packages[key].has_update = False
                         self.finished.emit(True, tr("removed_success", name=real_id))
                 else:
                     err = self._proc.stderr.read() if self._proc.stderr else "Flatpak işlemi başarısız oldu"
@@ -217,10 +232,14 @@ class InstallWorker(QThread):
 
             # Real pisi: run and parse progress from output
             import subprocess
+            import os
+            use_pkexec = hasattr(os, "geteuid") and os.geteuid() != 0
+            base_cmd = ["pkexec", "pisi"] if use_pkexec else ["pisi"]
+
             if self.action == "install":
-                cmd = ["pisi", "install", "--yes-all", self.package_name]
+                cmd = base_cmd + ["install", "--yes-all", self.package_name]
             else:
-                cmd = ["pisi", "remove", "--yes-all", self.package_name]
+                cmd = base_cmd + ["remove", "--yes-all", self.package_name]
 
             self._proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
@@ -249,14 +268,18 @@ class InstallWorker(QThread):
                 if self.action == "install":
                     if self.package_name in self.backend._available_packages:
                         self.backend._available_packages[self.package_name].installed = True
+                        self.backend._available_packages[self.package_name].has_update = False
                         self.backend._installed_packages[self.package_name] = \
                             self.backend._available_packages[self.package_name]
+                    if self.package_name in self.backend._installed_packages:
+                        self.backend._installed_packages[self.package_name].has_update = False
                     self.finished.emit(True, tr("installed_success", name=self.package_name))
                 else:
                     if self.package_name in self.backend._installed_packages:
                         del self.backend._installed_packages[self.package_name]
                     if self.package_name in self.backend._available_packages:
                         self.backend._available_packages[self.package_name].installed = False
+                        self.backend._available_packages[self.package_name].has_update = False
                     self.finished.emit(True, tr("removed_success", name=self.package_name))
             else:
                 err = self._proc.stderr.read() if self._proc.stderr else "Bilinmeyen hata"
@@ -491,10 +514,7 @@ class CategoryView(QWidget):
         self.cat_title.setStyleSheet(f"color: {ThemeManager.text_primary()}; font-size: 22px; font-weight: 800; background: transparent; border: none;")
         top_box.addWidget(self.cat_title)
         top_box.addStretch()
-
-        btn_suggest = QPushButton(tr("suggest_app"))
-        btn_suggest.setStyleSheet(f"color: {ThemeManager.accent_teal()}; font-size: 13px; font-weight: 600; background: transparent; border: none;")
-        top_box.addWidget(btn_suggest)
+        
         lay.addLayout(top_box)
 
         # Başlık
@@ -767,7 +787,7 @@ class AppDetailView(QWidget):
             it = self.gallery_container.takeAt(0)
             if it.widget(): it.widget().deleteLater()
 
-        # Eğer Flatpak uygulaması ise Flathub API'sinden detaylı veri ve fotoğrafları çek
+        # Eğer Flatpak uygulaması ise FlatHub API'sinden detaylı veri ve fotoğrafları çek
         if pkg.is_flatpak and hasattr(self, "backend"):
             self.desc_lbl.setText(pkg.description or pkg.summary or tr("loading_flathub"))
             def _load_flathub_data():
@@ -784,7 +804,7 @@ class AppDetailView(QWidget):
                         pkg.icon_path = info["local_icon"]
                         self.ico_lbl.setPixmap(load_app_icon(pkg.icon_path, pkg.icon_name, 80))
                     
-                    # Flathub ekran görüntülerini göster
+                    # FlatHub ekran görüntülerini göster
                     sc_paths = info.get("screenshots", [])
                     if sc_paths:
                         for sc_p in sc_paths[:4]:
@@ -1314,12 +1334,453 @@ class LoadingOverlay(QWidget):
 
 
 # ──────────────────────────────────────────────
+#  Ayarlar Görünümü (SettingsView)
+# ──────────────────────────────────────────────
+class SettingsView(QWidget):
+    settings_changed = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.settings = SettingsManager.load_settings()
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        container = QWidget()
+        lay = QVBoxLayout(container)
+        lay.setContentsMargins(36, 28, 36, 28)
+        lay.setSpacing(24)
+
+        # Header
+        title_box = QHBoxLayout()
+        ico = QLabel()
+        kde_ico = get_kde_icon("applications-other-symbolic")
+        if not kde_ico.isNull():
+            ico.setPixmap(kde_ico.pixmap(28, 28))
+        else:
+            ico.setText("⚙️")
+            ico.setStyleSheet("font-size: 24px;")
+        title_box.addWidget(ico)
+
+        self.title_lbl = QLabel(tr("settings_title"))
+        self.title_lbl.setStyleSheet(f"color: {ThemeManager.text_primary()}; font-size: 22px; font-weight: 800;")
+        title_box.addWidget(self.title_lbl)
+        title_box.addStretch()
+        lay.addLayout(title_box)
+
+        # Section 1: General & Autostart
+        self.lbl_sec1 = self._create_section_label(tr("settings_section_general"))
+        lay.addWidget(self.lbl_sec1)
+
+        card1 = self._create_card()
+        c1_lay = QVBoxLayout(card1)
+        c1_lay.setContentsMargins(20, 16, 20, 16)
+        c1_lay.setSpacing(10)
+
+        self.chk_autostart = QCheckBox(tr("settings_autostart"))
+        self.chk_autostart.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chk_autostart.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {ThemeManager.text_primary()};")
+        self.chk_autostart.setChecked(SettingsManager.is_autostart_enabled() or self.settings.get("autostart", False))
+        self.chk_autostart.toggled.connect(self._on_changed)
+        c1_lay.addWidget(self.chk_autostart)
+
+        self.sub1 = QLabel(tr("settings_autostart_desc"))
+        self.sub1.setStyleSheet(f"font-size: 12px; color: {ThemeManager.text_secondary()}; margin-left: 24px;")
+        c1_lay.addWidget(self.sub1)
+
+        self.chk_close_to_tray = QCheckBox(tr("settings_close_to_tray"))
+        self.chk_close_to_tray.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chk_close_to_tray.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {ThemeManager.text_primary()};")
+        self.chk_close_to_tray.setChecked(self.settings.get("close_to_tray", True))
+        self.chk_close_to_tray.toggled.connect(self._on_changed)
+        c1_lay.addWidget(self.chk_close_to_tray)
+
+        self.sub2 = QLabel(tr("settings_close_to_tray_desc"))
+        self.sub2.setStyleSheet(f"font-size: 12px; color: {ThemeManager.text_secondary()}; margin-left: 24px;")
+        c1_lay.addWidget(self.sub2)
+
+        lay.addWidget(card1)
+
+        # Section 2: Updates
+        self.lbl_sec2 = self._create_section_label(tr("settings_section_updates"))
+        lay.addWidget(self.lbl_sec2)
+
+        card2 = self._create_card()
+        c2_lay = QVBoxLayout(card2)
+        c2_lay.setContentsMargins(20, 16, 20, 16)
+        c2_lay.setSpacing(12)
+
+        self.lbl_int = QLabel(tr("settings_auto_check_interval"))
+        self.lbl_int.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {ThemeManager.text_primary()};")
+        c2_lay.addWidget(self.lbl_int)
+
+        self.combo_interval = QComboBox()
+        self.combo_interval.setFixedSize(280, 36)
+        self.combo_interval.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.combo_interval.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {ThemeManager.sidebar_bg()};
+                color: {ThemeManager.text_primary()};
+                border: 1px solid {ThemeManager.border()};
+                border-radius: 8px;
+                padding: 4px 12px;
+                font-size: 13px;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                background: transparent;
+                width: 24px;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid {ThemeManager.text_secondary()};
+            }}
+        """)
+        self._populate_intervals()
+        self.combo_interval.currentIndexChanged.connect(self._on_changed)
+        c2_lay.addWidget(self.combo_interval)
+
+        self.chk_auto_install = QCheckBox(tr("settings_auto_install_updates"))
+        self.chk_auto_install.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chk_auto_install.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {ThemeManager.text_primary()}; margin-top: 6px;")
+        self.chk_auto_install.setChecked(self.settings.get("auto_install_updates", False))
+        self.chk_auto_install.toggled.connect(self._on_changed)
+        c2_lay.addWidget(self.chk_auto_install)
+
+        self.sub_auto_install = QLabel(tr("settings_auto_install_updates_desc"))
+        self.sub_auto_install.setStyleSheet(f"font-size: 12px; color: {ThemeManager.text_secondary()}; margin-left: 24px;")
+        c2_lay.addWidget(self.sub_auto_install)
+
+        lay.addWidget(card2)
+
+        # Section 3: Language
+        self.lbl_sec3 = self._create_section_label(tr("settings_section_language"))
+        lay.addWidget(self.lbl_sec3)
+
+        card3 = self._create_card()
+        c3_lay = QVBoxLayout(card3)
+        c3_lay.setContentsMargins(20, 16, 20, 16)
+        c3_lay.setSpacing(12)
+
+        self.lbl_lang = QLabel(tr("settings_language_label"))
+        self.lbl_lang.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {ThemeManager.text_primary()};")
+        c3_lay.addWidget(self.lbl_lang)
+
+        self.combo_lang = QComboBox()
+        self.combo_lang.setFixedSize(280, 36)
+        self.combo_lang.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.combo_lang.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {ThemeManager.sidebar_bg()};
+                color: {ThemeManager.text_primary()};
+                border: 1px solid {ThemeManager.border()};
+                border-radius: 8px;
+                padding: 4px 12px;
+                font-size: 13px;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                background: transparent;
+                width: 24px;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid {ThemeManager.text_secondary()};
+            }}
+        """)
+        self.combo_lang.addItem("Türkçe 🇹🇷", "tr")
+        self.combo_lang.addItem("English 🇬🇧", "en")
+        curr_lang = self.settings.get("language", I18n.get_lang())
+        if curr_lang == "en":
+            self.combo_lang.setCurrentIndex(1)
+        else:
+            self.combo_lang.setCurrentIndex(0)
+        self.combo_lang.currentIndexChanged.connect(self._on_changed)
+        c3_lay.addWidget(self.combo_lang)
+
+        lay.addWidget(card3)
+
+        # Section 4: Hakkında
+        self.lbl_sec4 = self._create_section_label(tr("nav_about"))
+        lay.addWidget(self.lbl_sec4)
+
+        card_about = QWidget()
+        card_about.setStyleSheet("background: transparent; border: none;")
+        ca_lay = QVBoxLayout(card_about)
+        ca_lay.setContentsMargins(0, 8, 0, 8)
+        ca_lay.setSpacing(14)
+
+        about_top = QHBoxLayout()
+        about_icon = QLabel()
+        if os.path.exists(APP_ICON_PATH):
+            about_icon.setPixmap(QPixmap(APP_ICON_PATH).scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        else:
+            about_icon.setText("📦")
+            about_icon.setStyleSheet("font-size: 36px;")
+        about_top.addWidget(about_icon)
+
+        about_text_lay = QVBoxLayout()
+        self.about_name_lbl = QLabel(tr("about_app_name"))
+        self.about_name_lbl.setStyleSheet(f"color: {ThemeManager.text_primary()}; font-size: 16px; font-weight: 800;")
+        about_text_lay.addWidget(self.about_name_lbl)
+
+        self.about_ver_lbl = QLabel(tr("about_version"))
+        self.about_ver_lbl.setStyleSheet(f"""
+            background-color: {ThemeManager.accent_teal()};
+            color: white;
+            padding: 2px 10px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 700;
+        """)
+        about_text_lay.addWidget(self.about_ver_lbl, 0, Qt.AlignmentFlag.AlignLeft)
+        about_top.addLayout(about_text_lay)
+        about_top.addStretch()
+        ca_lay.addLayout(about_top)
+
+
+        self.about_desc_lbl = QLabel(tr("about_description"))
+        self.about_desc_lbl.setStyleSheet(f"color: {ThemeManager.text_secondary()}; font-size: 13px;")
+        self.about_desc_lbl.setWordWrap(True)
+        ca_lay.addWidget(self.about_desc_lbl)
+
+        self.about_dev_lbl = QLabel(f"🏢 {tr('about_developer')}")
+        self.about_dev_lbl.setStyleSheet(f"color: {ThemeManager.text_primary()}; font-size: 13px; font-weight: 600;")
+        ca_lay.addWidget(self.about_dev_lbl)
+
+        self.about_web_lbl = QLabel(f"🌐 <a href='https://www.teknoanka.com/' style='color:{ThemeManager.accent_teal()}; text-decoration:none;'>www.teknoanka.com</a>")
+        self.about_web_lbl.setOpenExternalLinks(True)
+        self.about_web_lbl.setStyleSheet("font-size: 13px; font-weight: 600;")
+        ca_lay.addWidget(self.about_web_lbl)
+
+        self.about_lic_lbl = QLabel(f"📜 {tr('about_license')}")
+        self.about_lic_lbl.setStyleSheet(f"color: {ThemeManager.text_secondary()}; font-size: 13px;")
+        ca_lay.addWidget(self.about_lic_lbl)
+
+        lay.addWidget(card_about)
+
+        lay.addStretch()
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+    def _populate_intervals(self):
+        self.combo_interval.blockSignals(True)
+        self.combo_interval.clear()
+        interval_map = [
+            (0, tr("interval_disabled")),
+            (1, tr("interval_1h")),
+            (4, tr("interval_4h")),
+            (12, tr("interval_12h")),
+            (24, tr("interval_24h")),
+        ]
+        curr_val = self.settings.get("check_interval_hours", 4)
+        selected_idx = 2
+        for idx, (val, txt) in enumerate(interval_map):
+            self.combo_interval.addItem(txt, val)
+            if val == curr_val:
+                selected_idx = idx
+        self.combo_interval.setCurrentIndex(selected_idx)
+        self.combo_interval.blockSignals(False)
+
+    def _create_section_label(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet(f"color: {ThemeManager.accent_teal()}; font-size: 13px; font-weight: 800; text-transform: uppercase;")
+        return lbl
+
+    def _create_card(self) -> QFrame:
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {ThemeManager.sidebar_bg()};
+                border: 1px solid {ThemeManager.border()};
+                border-radius: 12px;
+            }}
+            QLabel {{
+                border: none;
+                background: transparent;
+            }}
+            QCheckBox {{
+                border: none;
+                background: transparent;
+            }}
+        """)
+        return card
+
+    def _on_changed(self):
+        autostart = self.chk_autostart.isChecked()
+        close_to_tray = self.chk_close_to_tray.isChecked()
+        auto_install = self.chk_auto_install.isChecked()
+        interval = self.combo_interval.currentData()
+        lang = self.combo_lang.currentData()
+
+        self.settings["autostart"] = autostart
+        self.settings["close_to_tray"] = close_to_tray
+        self.settings["auto_install_updates"] = auto_install
+        self.settings["check_interval_hours"] = interval if interval is not None else 4
+        self.settings["language"] = lang
+
+        SettingsManager.set_autostart(autostart)
+        SettingsManager.save_settings(self.settings)
+        I18n.set_lang(lang)
+        self.settings_changed.emit(self.settings)
+
+    def retranslate_ui(self):
+        """Dil değiştiğinde UI metinlerini günceller."""
+        self.title_lbl.setText(tr("settings_title"))
+        self.lbl_sec1.setText(tr("settings_section_general"))
+        self.chk_autostart.setText(tr("settings_autostart"))
+        self.sub1.setText(tr("settings_autostart_desc"))
+        self.chk_close_to_tray.setText(tr("settings_close_to_tray"))
+        self.sub2.setText(tr("settings_close_to_tray_desc"))
+        self.lbl_sec2.setText(tr("settings_section_updates"))
+        self.lbl_int.setText(tr("settings_auto_check_interval"))
+        self._populate_intervals()
+        self.chk_auto_install.setText(tr("settings_auto_install_updates"))
+        self.sub_auto_install.setText(tr("settings_auto_install_updates_desc"))
+        self.lbl_sec3.setText(tr("settings_section_language"))
+        self.lbl_lang.setText(tr("settings_language_label"))
+        # Hakkında bölümü
+        if hasattr(self, 'lbl_sec4'):
+            self.lbl_sec4.setText(tr("nav_about"))
+        if hasattr(self, 'about_name_lbl'):
+            self.about_name_lbl.setText(tr("about_app_name"))
+        if hasattr(self, 'about_ver_lbl'):
+            self.about_ver_lbl.setText(tr("about_version"))
+        if hasattr(self, 'about_desc_lbl'):
+            self.about_desc_lbl.setText(tr("about_description"))
+        if hasattr(self, 'about_dev_lbl'):
+            self.about_dev_lbl.setText(f"🏢 {tr('about_developer')}")
+        if hasattr(self, 'about_lic_lbl'):
+            self.about_lic_lbl.setText(f"📜 {tr('about_license')}")
+
+
+# ──────────────────────────────────────────────
+#  Hakkında Görünümü (AboutView)
+# ──────────────────────────────────────────────
+class AboutView(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        container = QWidget()
+        lay = QVBoxLayout(container)
+        lay.setContentsMargins(36, 48, 36, 36)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.setSpacing(16)
+
+        # Logo
+        self.logo_lbl = QLabel()
+        if os.path.exists(APP_ICON_PATH):
+            self.logo_lbl.setPixmap(QPixmap(APP_ICON_PATH).scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        else:
+            self.logo_lbl.setText("📦")
+            self.logo_lbl.setStyleSheet("font-size: 72px;")
+        self.logo_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.logo_lbl)
+
+        # Title
+        self.title_lbl = QLabel(tr("about_app_name"))
+        self.title_lbl.setStyleSheet(f"color: {ThemeManager.text_primary()}; font-size: 26px; font-weight: 800;")
+        self.title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.title_lbl)
+
+        # Version Pill
+        self.ver_lbl = QLabel(tr("about_version"))
+        self.ver_lbl.setStyleSheet(f"""
+            background-color: {ThemeManager.accent_teal()};
+            color: white;
+            padding: 4px 16px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 700;
+        """)
+        self.ver_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.ver_lbl, 0, Qt.AlignmentFlag.AlignCenter)
+
+        # Description
+        self.desc_lbl = QLabel(tr("about_description"))
+        self.desc_lbl.setStyleSheet(f"color: {ThemeManager.text_secondary()}; font-size: 14px; margin-top: 8px;")
+        self.desc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.desc_lbl)
+
+        # Details Card
+        card = QFrame()
+        card.setFixedWidth(540)
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {ThemeManager.sidebar_bg()};
+                border: 1px solid {ThemeManager.border()};
+                border-radius: 14px;
+            }}
+        """)
+        c_lay = QVBoxLayout(card)
+        c_lay.setContentsMargins(24, 20, 24, 20)
+        c_lay.setSpacing(14)
+
+        self.dev_lbl = QLabel(f"🏢 {tr('about_developer')}")
+        self.dev_lbl.setStyleSheet(f"color: {ThemeManager.text_primary()}; font-size: 13px; font-weight: 600;")
+        c_lay.addWidget(self.dev_lbl)
+
+        self.web_lbl = QLabel(f"🌐 <a href='https://www.teknoanka.com/' style='color:{ThemeManager.accent_teal()}; text-decoration:none;'>www.teknoanka.com</a>")
+        self.web_lbl.setOpenExternalLinks(True)
+        self.web_lbl.setStyleSheet("font-size: 13px; font-weight: 600;")
+        c_lay.addWidget(self.web_lbl)
+
+        self.lic_lbl = QLabel(f"📜 {tr('about_license')}")
+        self.lic_lbl.setStyleSheet(f"color: {ThemeManager.text_secondary()}; font-size: 13px;")
+        c_lay.addWidget(self.lic_lbl)
+
+        lay.addWidget(card, 0, Qt.AlignmentFlag.AlignCenter)
+
+        lay.addStretch()
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+    def retranslate_ui(self):
+        """Dil değiştiğinde UI metinlerini günceller."""
+        self.title_lbl.setText(tr("about_app_name"))
+        self.ver_lbl.setText(tr("about_version"))
+        self.desc_lbl.setText(tr("about_description"))
+        self.dev_lbl.setText(f"🏢 {tr('about_developer')}")
+        self.lic_lbl.setText(f"📜 {tr('about_license')}")
+
+
+# ──────────────────────────────────────────────
 #  PiSiM Market Ana Pencere (MainWindow)
 # ──────────────────────────────────────────────
 class MainWindow(QMainWindow):
 
-    def __init__(self):
+    def __init__(self, start_minimized: bool = False):
         super().__init__()
+        self.settings = SettingsManager.load_settings()
+        self.start_minimized = start_minimized
+        self._is_quitting = False
+
+        # Dil ayarını uygula
+        I18n.set_lang(self.settings.get("language", "tr"))
+
         self.backend = PisiBackend()
         self._all_packages: list[PackageInfo] = []
         self._history_stack: list[str] = []
@@ -1333,6 +1794,9 @@ class MainWindow(QMainWindow):
         self._load_fonts()
         self._build_ui()
         self.apply_theme()
+
+        self._setup_system_tray()
+        self._setup_auto_update_timer()
 
         QTimer.singleShot(100, self._start_load)
 
@@ -1359,6 +1823,23 @@ class MainWindow(QMainWindow):
             self.header_frame.setStyleSheet(f"QFrame {{ background-color: {ThemeManager.sidebar_bg()}; border-bottom: 1px solid {ThemeManager.border()}; }}")
         if hasattr(self, "sidebar_sep"):
             self.sidebar_sep.setStyleSheet(f"background-color: {ThemeManager.border()}; border: none;")
+
+        if hasattr(self, "btn_header_settings"):
+            self.btn_header_settings.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    border: none;
+                    border-radius: 8px;
+                    color: {ThemeManager.text_primary()};
+                    font-size: 18px;
+                }}
+                QPushButton:hover {{
+                    background-color: {ThemeManager.border()};
+                }}
+                QPushButton:pressed {{
+                    background-color: {ThemeManager.accent_teal()}22;
+                }}
+            """)
 
         for btn in self.sidebar_buttons.values():
             btn.update_style()
@@ -1434,7 +1915,7 @@ class MainWindow(QMainWindow):
         self.sb_lay.addStretch()
         sb_lay.addWidget(scroll_w, 1)
 
-        # ── Ayrıştırıcı Çizgi ve En Alttaki Güncellemeler Butonu ──
+        # ── Ayrıştırıcı Çizgi ve En Alttaki Butonlar ──
         self.sidebar_sep = QFrame()
         self.sidebar_sep.setFrameShape(QFrame.Shape.HLine)
         self.sidebar_sep.setFixedHeight(1)
@@ -1456,8 +1937,6 @@ class MainWindow(QMainWindow):
         b_lay.addWidget(btn_installed)
 
         sb_lay.addWidget(bottom_w)
-
-        # (Güncellemeler paneli kaldırıldı)
 
         hl.addWidget(self.sidebar)
 
@@ -1503,6 +1982,35 @@ class MainWindow(QMainWindow):
 
         tb_lay.addStretch()
 
+        # Ayarlar İkon Butonu (sağ üst köşe)
+        self.btn_header_settings = QPushButton()
+        kde_settings_ico = get_kde_icon("applications-other-symbolic")
+        if not kde_settings_ico.isNull():
+            self.btn_header_settings.setIcon(kde_settings_ico)
+            self.btn_header_settings.setIconSize(QSize(22, 22))
+        else:
+            self.btn_header_settings.setText("⚙")
+        self.btn_header_settings.setFixedSize(36, 36)
+        self.btn_header_settings.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_header_settings.setToolTip(tr("nav_settings"))
+        self.btn_header_settings.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                border-radius: 8px;
+                color: {ThemeManager.text_primary()};
+                font-size: 18px;
+            }}
+            QPushButton:hover {{
+                background-color: {ThemeManager.border()};
+            }}
+            QPushButton:pressed {{
+                background-color: {ThemeManager.accent_teal()}22;
+            }}
+        """)
+        self.btn_header_settings.clicked.connect(lambda: self._nav_category("settings"))
+        tb_lay.addWidget(self.btn_header_settings)
+
         r_lay.addWidget(self.topbar)
 
         # Stacked Views (Animasyonlu Geçişler)
@@ -1512,7 +2020,6 @@ class MainWindow(QMainWindow):
         self.v_loading = LoadingOverlay()
         self.stack.addWidget(self.v_loading)
         self.stack.setCurrentWidget(self.v_loading)
-
 
         self.v_category = CategoryView()
         self.v_category.package_clicked.connect(self._show_detail)
@@ -1543,8 +2050,279 @@ class MainWindow(QMainWindow):
         self.v_search.card_created.connect(self._bind_install_widget)
         self.stack.addWidget(self.v_search)
 
+        self.v_settings = SettingsView()
+        self.v_settings.settings_changed.connect(self._on_settings_changed)
+        self.stack.addWidget(self.v_settings)
+
+        self.v_about = AboutView()
+        self.stack.addWidget(self.v_about)
+
         r_lay.addWidget(self.stack)
         hl.addWidget(right_w)
+
+    def _setup_system_tray(self):
+        """Sistem tepsisi simgesi ve arka planda çalışma işlevlerini kurar."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+
+        self.tray_menu = QMenu(self)
+        self.tray_menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {ThemeManager.sidebar_bg()};
+                color: {ThemeManager.text_primary()};
+                border: 1px solid {ThemeManager.border()};
+                border-radius: 8px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 16px;
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background-color: {ThemeManager.accent_teal()};
+                color: white;
+            }}
+        """)
+
+        self.action_open = self.tray_menu.addAction(tr("tray_open_app"))
+        self.action_open.triggered.connect(self._show_window)
+
+        self.action_check = self.tray_menu.addAction(tr("tray_check_updates"))
+        self.action_check.triggered.connect(lambda: self._check_for_updates(switch_view=True))
+
+        self.tray_menu.addSeparator()
+
+        self.action_quit = self.tray_menu.addAction(tr("tray_exit"))
+        self.action_quit.triggered.connect(self._force_quit)
+
+        ico = self._create_tray_icon(has_updates=False)
+        self.tray_icon = QSystemTrayIcon(ico, self)
+        self.tray_icon.setContextMenu(self.tray_menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+
+        self._update_tray_visibility()
+
+    def _on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self._show_window()
+
+    def _show_window(self):
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+    def _force_quit(self):
+        self._is_quitting = True
+        if hasattr(self, 'tray_icon'):
+            self.tray_icon.hide()
+        QApplication.quit()
+
+    def closeEvent(self, event):
+        if not getattr(self, '_is_quitting', False) and self.settings.get("close_to_tray", True):
+            event.ignore()
+            self.hide()
+        else:
+            if hasattr(self, 'tray_icon'):
+                self.tray_icon.hide()
+            event.accept()
+
+    def _send_kde_notification(self, pkg_name: str, pkg_info=None, ok: bool = True):
+        """KDE Plasma freedesktop bildirimi gönderir. Başarılı kurulumda 'Çalıştır' butonu içerir."""
+        import subprocess
+        import threading
+
+        # Paket simgesini bul: öncelik icon_path, sonra icon_name, sonra icon
+        icon_path = APP_ICON_PATH
+        if pkg_info:
+            if getattr(pkg_info, 'icon_path', None) and os.path.exists(pkg_info.icon_path):
+                icon_path = pkg_info.icon_path
+            elif getattr(pkg_info, 'icon_name', None):
+                icon_path = pkg_info.icon_name
+            elif getattr(pkg_info, 'icon', None):
+                candidate = pkg_info.icon
+                if os.path.isabs(candidate) and os.path.exists(candidate):
+                    icon_path = candidate
+
+        # Temiz uygulama adını belirle (kaynak ön takısı veya ham paket kimliği yerine)
+        app_title_name = ""
+        if pkg_info and getattr(pkg_info, 'display_name', None):
+            app_title_name = pkg_info.display_name
+        if not app_title_name:
+            raw_clean = pkg_name.removeprefix("flatpak:")
+            if "." in raw_clean:
+                parts = [p for p in raw_clean.split(".") if p]
+                if parts:
+                    app_title_name = parts[-1]
+            if not app_title_name:
+                app_title_name = raw_clean
+
+        title = tr("notif_installing_done_title") if ok else tr("notif_installing_error_title")
+        body  = tr("notif_installing_done_body", pkg=app_title_name) if ok \
+                else tr("notif_installing_error_body", pkg=app_title_name)
+
+        def _worker():
+            try:
+                cmd = [
+                    "notify-send",
+                    "--app-name=PiSiM",
+                    "--urgency=normal",
+                    f"--icon={icon_path}",
+                ]
+                if ok:
+                    # libnotify 0.7.9+ → --action: bildirime buton ekler
+                    cmd += ["--action", f"run={tr('notif_action_run')}"]
+                cmd += [title, body]
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,   # kullanıcının tıklaması için bekle
+                )
+                # notify-send, tıklanan action id'yi stdout'a yazar
+                if ok and result.stdout.strip() == "run":
+                    self._launch_package(pkg_name, pkg_info)
+            except Exception:
+                # notify-send yoksa sessizce atla
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _launch_package(self, pkg_name: str, pkg_info=None):
+        """Paketi çalıştırmayı dener."""
+        import subprocess
+        real_name = pkg_name.removeprefix("flatpak:") if pkg_name.startswith("flatpak:") else pkg_name
+
+        # 1. Flatpak ise flatpak run ile başlat
+        if pkg_name.startswith("flatpak:"):
+            try:
+                subprocess.Popen(["flatpak", "run", real_name])
+                return
+            except Exception:
+                pass
+
+        # 2. /usr/share/applications içinden desktop dosyası bul
+        import glob
+        desktop_candidates = glob.glob(f"/usr/share/applications/*{real_name.lower()}*.desktop")
+        if desktop_candidates:
+            try:
+                subprocess.Popen(["xdg-open", desktop_candidates[0]])
+                return
+            except Exception:
+                pass
+
+        # 3. PATH'ta aynı isimle çalıştır
+        try:
+            subprocess.Popen([real_name])
+        except Exception:
+            pass
+
+    def _create_tray_icon(self, has_updates: bool = False) -> QIcon:
+        """Sistem tepsisi simgesini oluşturur. Güncelleme varsa sol alt köşesine güncelleme simgesi çizer."""
+        if os.path.exists(APP_ICON_PATH):
+            base_pixmap = QPixmap(APP_ICON_PATH)
+        else:
+            base_icon = QIcon.fromTheme("system-software-install")
+            base_pixmap = base_icon.pixmap(48, 48)
+
+        if not has_updates:
+            return QIcon(base_pixmap)
+
+        size = base_pixmap.size()
+        if size.isEmpty() or size.width() < 16:
+            size = QSize(48, 48)
+
+        result_pixmap = QPixmap(size)
+        result_pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(result_pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.drawPixmap(0, 0, base_pixmap)
+
+        # Sol alt köşe rozeti (Bottom-left badge)
+        w, h = size.width(), size.height()
+        badge_size = max(16, int(w * 0.45))
+
+        bx = 0
+        by = h - badge_size
+
+        # Koyu çerçeveli dairesel rozet
+        painter.setPen(QPen(QColor("#18181a"), 2))
+        painter.setBrush(QColor("#2ba0b5"))
+        painter.drawEllipse(bx, by, badge_size, badge_size)
+
+        # Beyaz ok simgesi (Yukarı yönlü ok)
+        painter.setPen(QPen(QColor("#ffffff"), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        cx = bx + badge_size / 2.0
+        cy = by + badge_size / 2.0
+        arrow_h = badge_size * 0.45
+
+        # Dikey gövde
+        painter.drawLine(int(cx), int(cy + arrow_h * 0.4), int(cx), int(cy - arrow_h * 0.4))
+        # Ok başı
+        painter.drawLine(int(cx - arrow_h * 0.35), int(cy - arrow_h * 0.1), int(cx), int(cy - arrow_h * 0.4))
+        painter.drawLine(int(cx + arrow_h * 0.35), int(cy - arrow_h * 0.1), int(cx), int(cy - arrow_h * 0.4))
+
+        painter.end()
+        return QIcon(result_pixmap)
+
+    def _update_tray_visibility(self):
+        if not hasattr(self, 'tray_icon') or not self.tray_icon:
+            return
+        upd_count = len([p for p in self._all_packages if p.has_update])
+        has_updates = (upd_count > 0)
+
+        self.tray_icon.setIcon(self._create_tray_icon(has_updates))
+        if has_updates:
+            self.tray_icon.setToolTip(tr("updates_available_tooltip", count=upd_count))
+        else:
+            self.tray_icon.setToolTip("PiSiM")
+        self.tray_icon.show()
+
+    def _setup_auto_update_timer(self):
+        if not hasattr(self, 'auto_update_timer'):
+            self.auto_update_timer = QTimer(self)
+            self.auto_update_timer.timeout.connect(lambda: self._check_for_updates(switch_view=False))
+
+        hours = self.settings.get("check_interval_hours", 4)
+        if hours > 0:
+            ms = hours * 3600 * 1000
+            self.auto_update_timer.setInterval(ms)
+            self.auto_update_timer.start()
+        else:
+            self.auto_update_timer.stop()
+
+    def _on_settings_changed(self, new_settings: dict):
+        self.settings = new_settings
+        self._setup_auto_update_timer()
+        self._update_tray_visibility()
+        if self.settings.get("auto_install_updates", False):
+            self._auto_install_all_updates()
+        self._retranslate_ui()
+
+    def _retranslate_ui(self):
+        if "all" in self.sidebar_buttons:
+            self.sidebar_buttons["all"].txt_lbl.setText(tr("nav_discover"))
+        if "installed" in self.sidebar_buttons:
+            self._update_sidebar_update_badge()
+        if hasattr(self, 'btn_header_settings'):
+            self.btn_header_settings.setToolTip(tr("nav_settings"))
+
+        if hasattr(self, 'action_open'):
+            self.action_open.setText(tr("tray_open_app"))
+        if hasattr(self, 'action_check'):
+            self.action_check.setText(tr("tray_check_updates"))
+        if hasattr(self, 'action_quit'):
+            self.action_quit.setText(tr("tray_exit"))
+
+        if hasattr(self, 'search_input'):
+            self.search_input.setPlaceholderText(tr("search_placeholder"))
+
+        if hasattr(self, 'v_settings'):
+            self.v_settings.retranslate_ui()
+        if hasattr(self, 'v_about'):
+            self.v_about.retranslate_ui()
 
     def _start_load(self):
         # Her zaman arka planda yükle — UI donmasın
@@ -1601,6 +2379,8 @@ class MainWindow(QMainWindow):
             self.sidebar_buttons["all"].setChecked(True)
         self._update_sidebar_update_badge()
         self._nav_category("all")
+        # Başlangıçta güncellemeleri otomatik denetle
+        QTimer.singleShot(500, lambda: self._check_for_updates(switch_view=False))
 
     def _update_sidebar_update_badge(self):
         upd_count = len([p for p in self._all_packages if p.has_update])
@@ -1614,6 +2394,8 @@ class MainWindow(QMainWindow):
                 self.sidebar_buttons["installed"].txt_lbl.setText(tr("updates_badge", count=total_count))
             else:
                 self.sidebar_buttons["installed"].txt_lbl.setText(tr("nav_updates"))
+
+        self._update_tray_visibility()
 
     def _nav_category(self, cat_id: str):
         if cat_id in self.sidebar_buttons:
@@ -1634,6 +2416,10 @@ class MainWindow(QMainWindow):
             self._update_sidebar_update_badge()
             self.v_installed.display_installed(installed, active_installing_pkgs=active_pkgs)
             self._switch_view("installed")
+        elif cat_id == "settings":
+            self._switch_view("settings")
+        elif cat_id == "about":
+            self._switch_view("about")
         elif not self._all_packages:
             pass  # henüz yüklenmedi
         else:
@@ -1645,7 +2431,6 @@ class MainWindow(QMainWindow):
                 # Parantez içindeki sayıyı çıkar: "Geliştirme (33)" -> "Geliştirme"
                 clean = re.sub(r'\s*\(\d+\)\s*$', '', label).strip()
                 cat_info["name"] = clean
-
 
             if cat_id == "all":
                 pkgs = [p for p in self._all_packages if not p.is_flatpak]
@@ -1660,13 +2445,14 @@ class MainWindow(QMainWindow):
             self.v_category.display_category(cat_id, cat_info["name"], cat_info["icon"], pkgs)
             self._switch_view("category")
 
-
     def _switch_view(self, view_name: str):
         self._history_stack.append(view_name)
         if view_name == "category": self.stack.setCurrentWidget(self.v_category)
         elif view_name == "detail": self.stack.setCurrentWidget(self.v_detail)
         elif view_name == "installed": self.stack.setCurrentWidget(self.v_installed)
         elif view_name == "search": self.stack.setCurrentWidget(self.v_search)
+        elif view_name == "settings": self.stack.setCurrentWidget(self.v_settings)
+        elif view_name == "about": self.stack.setCurrentWidget(self.v_about)
 
     def _show_detail(self, package_name: str):
         pkg = self.backend.get_package_info(package_name)
@@ -1752,6 +2538,7 @@ class MainWindow(QMainWindow):
 
         worker.progress.connect(lambda v, w=worker: setattr(w, '_last_progress', v))
         pkg_obj = self.backend.get_package_info(package_name)
+        was_installed = pkg_obj.installed if pkg_obj else False
 
         def _on_done(ok: bool, msg: str):
             if hasattr(self, '_workers') and worker in self._workers:
@@ -1766,11 +2553,11 @@ class MainWindow(QMainWindow):
                         install_widget.package.has_update = False
                         install_widget.finish_progress()
                     elif is_cancelled:
-                        if pkg_obj:
+                        if pkg_obj and not was_installed:
                             pkg_obj.installed = False
                         install_widget._restore_buttons()
                     else:
-                        if pkg_obj:
+                        if pkg_obj and not was_installed:
                             pkg_obj.installed = False
                         install_widget.show_error()
                 except RuntimeError:
@@ -1787,10 +2574,12 @@ class MainWindow(QMainWindow):
                         diw.package.has_update = False
                         diw.finish_progress()
                     elif is_cancelled:
-                        if pkg_obj:
+                        if pkg_obj and not was_installed:
                             pkg_obj.installed = False
                         diw._restore_buttons()
                     else:
+                        if pkg_obj and not was_installed:
+                            pkg_obj.installed = False
                         diw.show_error()
                 except RuntimeError:
                     pass
@@ -1799,7 +2588,12 @@ class MainWindow(QMainWindow):
                 pkg_obj.installed = True
                 pkg_obj.has_update = False
             elif not ok and pkg_obj:
-                pkg_obj.installed = False
+                if not was_installed:
+                    pkg_obj.installed = False
+
+            # KDE Plasma bildirimi: yalnızca pencere gizliyse gönder
+            if not self.isVisible() and not is_cancelled:
+                self._send_kde_notification(package_name, pkg_obj, ok=ok)
 
             self._update_all_views()
 
@@ -1848,6 +2642,7 @@ class MainWindow(QMainWindow):
             if ok and pkg_obj:
                 pkg_obj.installed = False
                 pkg_obj.has_update = False
+
             self._update_all_views()
 
         if not hasattr(self, '_workers'):
@@ -1876,7 +2671,7 @@ class MainWindow(QMainWindow):
         self.v_installed.display_installed(installed, active_installing_pkgs=active_pkgs)
         self._update_sidebar_update_badge()
 
-    def _check_for_updates(self):
+    def _check_for_updates(self, switch_view: bool = False):
         """PiSi depolarını güncellemeden paket güncellemelerini denetler."""
         if hasattr(self, '_checking_updates') and self._checking_updates:
             return
@@ -1896,26 +2691,37 @@ class MainWindow(QMainWindow):
 
             self._all_packages = list(self.backend.get_all_packages().values())
             self._update_all_views()
-            # Güncellemeler ekranına geç — _update_all_views zaten display_installed çağırıyor
-            self._switch_view("installed")
-            if "installed" in self.sidebar_buttons:
-                self.sidebar_buttons["installed"].setChecked(True)
+            if switch_view:
+                self._switch_view("installed")
+                if "installed" in self.sidebar_buttons:
+                    self.sidebar_buttons["installed"].setChecked(True)
 
+            # Otomatik güncelleme aktifse güncellemeleri indirip kur
             if count > 0:
-                QMessageBox.information(
-                    self,
-                    tr("update_check_dialog"),
-                    tr("updates_found_msg", count=count)
-                )
-            else:
-                QMessageBox.information(
-                    self,
-                    tr("update_check_dialog"),
-                    tr("system_up_to_date_msg")
-                )
+                if self.settings.get("auto_install_updates", False):
+                    self._auto_install_all_updates()
+                elif not self.isVisible():
+                    if hasattr(self, 'tray_icon') and self.tray_icon and QSystemTrayIcon.supportsMessages():
+                        self.tray_icon.show()
+                        self.tray_icon.showMessage(
+                            tr("notif_update_available_title"),
+                            tr("notif_update_available_body", count=count),
+                            QSystemTrayIcon.MessageIcon.Information,
+                            8000,
+                        )
 
         self.update_check_thread.finished_check.connect(_on_done)
         self.update_check_thread.start()
+
+    def _auto_install_all_updates(self):
+        """Otomatik güncelleme aktif ise mevcut tüm güncellemeleri arka planda kurar."""
+        if not self.settings.get("auto_install_updates", False):
+            return
+        upd_packages = [p for p in self._all_packages if p.has_update]
+        for pkg in upd_packages:
+            active_workers = getattr(self, '_workers', [])
+            if not any(getattr(w, 'package_name', '') == pkg.name for w in active_workers):
+                self._install(pkg.name)
 
     def _update_repository(self):
         """PiSi depolarını günceller."""

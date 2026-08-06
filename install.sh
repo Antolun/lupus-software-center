@@ -43,8 +43,8 @@ EOF
 Type=Application
 Name=PiSiM
 GenericName=PiSiM
-Comment=Install PiSi/Flatpak/Linyaps packages
-Comment[tr]=PiSi/Flatpak/Linyaps paketlerini kur
+Comment=Install PiSi/Flatpak packages
+Comment[tr]=PiSi/Flatpak paketlerini kur
 Exec=pisim %u
 Icon=/usr/share/pisim/pisi_store/assets/pisim.png
 Terminal=false

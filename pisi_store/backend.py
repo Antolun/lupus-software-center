@@ -190,32 +190,38 @@ class PisiBackend:
             self._flatpak_loaded = True
 
     def _load_installed_flatpaks(self):
-        """Kurulu Flatpak uygulamalarını listeler."""
+        """Kurulu Flatpak uygulamalarını ve platform/runtime bileşenlerini listeler."""
         try:
             result = subprocess.run(
-                ["flatpak", "list", "--app", "--columns=application,name,version,branch,origin"],
+                ["flatpak", "list", "--columns=application,name,version,branch,origin,ref"],
                 capture_output=True, text=True, timeout=15
             )
             if result.returncode != 0 or not result.stdout.strip():
                 return
             for line in result.stdout.strip().splitlines():
                 parts = [p.strip() for p in line.split("\t")]
-                if len(parts) < 2:
+                if not parts:
                     continue
                 app_id = parts[0]
-                display_name = parts[1] if len(parts) > 1 else app_id
-                version = parts[2] if len(parts) > 2 else ""
+                if not app_id and len(parts) > 5 and "/" in parts[5]:
+                    ref_parts = parts[5].split("/")
+                    if len(ref_parts) >= 2:
+                        app_id = ref_parts[1]
+                if not app_id:
+                    continue
+                display_name = parts[1] if len(parts) > 1 and parts[1] else app_id
+                version = parts[2] if len(parts) > 2 and parts[2] else (parts[3] if len(parts) > 3 else "")
                 origin = parts[4].capitalize() if len(parts) > 4 and parts[4] else "FlatHub"
                 key = f"flatpak:{app_id}"
-                icon_name = app_id.split(".")[-1].lower()
-                icon_path = self._find_flatpak_icon(app_id)
-                cat = self._get_flatpak_category(app_id)
+                icon_name = app_id.split(".")[-1].lower() if app_id else "flatpak"
+                icon_path = self._find_flatpak_icon(app_id) if app_id else ""
+                cat = self._get_flatpak_category(app_id) if app_id else "utilities"
                 pkg = PackageInfo(
                     name=key,
                     display_name=display_name,
                     version=version,
                     summary=f"{origin} · {app_id}",
-                    description=f"{display_name} uygulaması Flatpak ({origin}) aracılığıyla kurulmuştur.",
+                    description=f"{display_name} ({app_id}) Flatpak ({origin}) aracılığıyla kurulmuştur.",
                     category=cat,
                     icon_name=icon_name,
                     icon_path=icon_path,
@@ -227,8 +233,67 @@ class PisiBackend:
         except Exception as e:
             print(f"Flatpak kurulu paket listesi hatası: {e}")
 
+    def check_flatpak_updates(self) -> list[str]:
+        """Güncellenebilir Flatpak uygulamalarını ve platform/runtime bileşenlerini döndürür."""
+        if not self._flatpak_available:
+            return []
+        try:
+            result = subprocess.run(
+                ["flatpak", "remote-ls", "--updates", "--columns=application,name,version,branch,origin,ref"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return []
+            upgradable = []
+            for line in result.stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split("\t")]
+                if not parts:
+                    continue
+                app_id = parts[0]
+                if not app_id and len(parts) > 5 and "/" in parts[5]:
+                    ref_parts = parts[5].split("/")
+                    if len(ref_parts) >= 2:
+                        app_id = ref_parts[1]
+                if not app_id:
+                    continue
+                key = f"flatpak:{app_id}"
+                upgradable.append(key)
+
+                display_name = parts[1] if len(parts) > 1 and parts[1] else app_id
+                version = parts[2] if len(parts) > 2 and parts[2] else (parts[3] if len(parts) > 3 else "")
+                origin = parts[4].capitalize() if len(parts) > 4 and parts[4] else "FlatHub"
+
+                if key not in self._installed_packages:
+                    icon_name = app_id.split(".")[-1].lower() if app_id else "flatpak"
+                    icon_path = self._find_flatpak_icon(app_id) if app_id else ""
+                    cat = self._get_flatpak_category(app_id) if app_id else "utilities"
+                    pkg = PackageInfo(
+                        name=key,
+                        display_name=display_name,
+                        version=version,
+                        summary=f"{origin} · {app_id}",
+                        description=f"{display_name} ({app_id}) Flatpak ({origin}) aracılığıyla kurulmuştur.",
+                        category=cat,
+                        icon_name=icon_name,
+                        icon_path=icon_path,
+                        installed=True,
+                        has_update=True,
+                        is_flatpak=True,
+                        origin=origin
+                    )
+                    self._installed_packages[key] = pkg
+                else:
+                    self._installed_packages[key].has_update = True
+
+                if key in self._available_packages:
+                    self._available_packages[key].has_update = True
+            return upgradable
+        except Exception as e:
+            print(f"Flatpak güncelleme kontrolü hatası: {e}")
+            return []
+
     def _fetch_flathub_popularity(self) -> dict[str, tuple[int, int, str]]:
-        """Flathub API'sinden popülerlik (sıralama, son ayki indirilme sayısı ve ikon URL'si) verilerini çeker."""
+        """FlatHub API'sinden popülerlik (sıralama, son ayki indirilme sayısı ve ikon URL'si) verilerini çeker."""
         popular_info = {}
         try:
             url = "https://flathub.org/api/v2/collection/popular?page=1&per_page=250"
@@ -244,11 +309,11 @@ class PisiBackend:
                         if app_id:
                             popular_info[app_id] = (idx + 1, installs, icon_url)
         except Exception as e:
-            print(f"Flathub popülerlik listesi alma hatası: {e}")
+            print(f"FlatHub popülerlik listesi alma hatası: {e}")
         return popular_info
 
     def _get_or_download_flathub_icon(self, icon_url: str) -> str:
-        """Flathub ikon URL'sini yerel önbelleğe indirir ve dosya yolunu döndürür."""
+        """FlatHub ikon URL'sini yerel önbelleğe indirir ve dosya yolunu döndürür."""
         if not icon_url:
             return ""
         try:
@@ -265,7 +330,7 @@ class PisiBackend:
             return ""
 
     def _load_available_flatpaks(self):
-        """Flatpak remote'larındaki mevcut uygulamaları listeler ve Flathub popülerliğine göre sıralar."""
+        """Flatpak remote'larındaki mevcut uygulamaları listeler ve FlatHub popülerliğine göre sıralar."""
         try:
             result = subprocess.run(
                 ["flatpak", "remote-ls", "--app", "--columns=application,name,version,origin"],
@@ -316,7 +381,7 @@ class PisiBackend:
                 )
                 flatpak_pkgs.append((rank, pkg))
 
-            # Flathub popülerlik sıralamasına göre diz (önce popüler olanlar, rank 1..N)
+            # FlatHub popülerlik sıralamasına göre diz (önce popüler olanlar, rank 1..N)
             flatpak_pkgs.sort(key=lambda x: x[0])
 
             for _, pkg in flatpak_pkgs:
@@ -482,31 +547,7 @@ class PisiBackend:
         except Exception as e:
             return False, str(e)
 
-    def check_flatpak_updates(self) -> list[str]:
-        """Güncellenebilir Flatpak uygulamalarını döndürür."""
-        if not self._flatpak_available:
-            return []
-        try:
-            result = subprocess.run(
-                ["flatpak", "remote-ls", "--updates", "--app", "--columns=application"],
-                capture_output=True, text=True, timeout=30
-            )
-            if result.returncode != 0:
-                return []
-            upgradable = []
-            for line in result.stdout.strip().splitlines():
-                app_id = line.strip()
-                if app_id:
-                    key = f"flatpak:{app_id}"
-                    upgradable.append(key)
-                    if key in self._installed_packages:
-                        self._installed_packages[key].has_update = True
-                    if key in self._available_packages:
-                        self._available_packages[key].has_update = True
-            return upgradable
-        except Exception as e:
-            print(f"Flatpak güncelleme kontrolü hatası: {e}")
-            return []
+
 
     def get_installed_packages(self) -> dict[str, PackageInfo]:
         if self._installed_packages:

@@ -1124,3 +1124,4 @@ class ImageViewerDialog(QDialog):
             self.zoom_out()
         event.accept()
 
+
