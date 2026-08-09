@@ -35,6 +35,20 @@ from .widgets import (
 )
 
 
+def truncate_text(text: str, max_chars: int = 350) -> str:
+    """Metin çok uzunsa kelime sınırından kesip sonuna '...' ekler."""
+    if not text:
+        return ""
+    clean = text.strip()
+    if len(clean) <= max_chars:
+        return clean
+    truncated = clean[:max_chars]
+    last_space = truncated.rfind(' ')
+    if last_space > int(max_chars * 0.7):
+        truncated = truncated[:last_space]
+    return truncated.rstrip() + "..."
+
+
 # ──────────────────────────────────────────────
 #  Animasyonlu QStackedWidget
 # ──────────────────────────────────────────────
@@ -214,32 +228,16 @@ class InstallWorker(QThread):
                     self.finished.emit(False, err)
                 return
 
-            # Simulated progress for demo mode (pisi not available)
-            if not self.backend.is_pisi_available():
-                import time
-                for pct in range(0, 101, 10):
-                    if self._cancelled:
-                        self.finished.emit(False, "İptal edildi")
-                        return
-                    self.progress.emit(pct)
-                    time.sleep(0.05)
-                if self.action == "install":
-                    ok, msg = self.backend.install_package(self.package_name)
-                else:
-                    ok, msg = self.backend.remove_package(self.package_name)
-                self.finished.emit(ok, msg)
-                return
-
-            # Real pisi: run and parse progress from output
+            # Real pisi execution
             import subprocess
             import os
             use_pkexec = hasattr(os, "geteuid") and os.geteuid() != 0
             base_cmd = ["pkexec", "pisi"] if use_pkexec else ["pisi"]
 
             if self.action == "install":
-                cmd = base_cmd + ["install", "--yes-all", self.package_name]
+                cmd = base_cmd + ["install", "-y", self.package_name]
             else:
-                cmd = base_cmd + ["remove", "--yes-all", self.package_name]
+                cmd = base_cmd + ["remove", "-y", self.package_name]
 
             self._proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
@@ -752,7 +750,12 @@ class AppDetailView(QWidget):
 
         self.sub_lbl.setText(pkg.summary)
         self.cat_lbl.setText(pkg.category.capitalize())
-        self.desc_lbl.setText(pkg.description or pkg.summary)
+        init_desc = (pkg.description or pkg.summary or "").strip()
+        self.desc_lbl.setText(truncate_text(init_desc, 350))
+        if len(init_desc) > 350:
+            self.desc_lbl.setToolTip(init_desc)
+        else:
+            self.desc_lbl.setToolTip("")
 
         self.ico_lbl.setPixmap(load_app_icon(pkg.icon_path, pkg.icon_name, 80))
 
@@ -789,7 +792,7 @@ class AppDetailView(QWidget):
 
         # Eğer Flatpak uygulaması ise FlatHub API'sinden detaylı veri ve fotoğrafları çek
         if pkg.is_flatpak and hasattr(self, "backend"):
-            self.desc_lbl.setText(pkg.description or pkg.summary or tr("loading_flathub"))
+            self.desc_lbl.setText(truncate_text(pkg.description or pkg.summary or tr("loading_flathub"), 350))
             def _load_flathub_data():
                 info = self.backend.fetch_flathub_info(pkg.name)
                 if info:
@@ -797,13 +800,33 @@ class AppDetailView(QWidget):
                         self.sub_lbl.setText(info["summary"])
                     if info.get("description"):
                         clean_desc = re.sub(r'<[^>]+>', '', info["description"]).strip()
-                        self.desc_lbl.setText(clean_desc)
+                        self.desc_lbl.setText(truncate_text(clean_desc, 350))
+                        if len(clean_desc) > 350:
+                            self.desc_lbl.setToolTip(clean_desc)
+                        else:
+                            self.desc_lbl.setToolTip("")
                     if info.get("developer"):
                         pkg.developer = info["developer"]
+                    if info.get("license"):
+                        pkg.license = info["license"]
+                    if info.get("homepage"):
+                        pkg.homepage = info["homepage"]
+                    if info.get("vcs_url"):
+                        pkg.vcs_url = info["vcs_url"]
+                    if info.get("download_size"):
+                        pkg.download_size = info["download_size"]
+                    if info.get("installed_size"):
+                        pkg.installed_size = info["installed_size"]
                     if info.get("local_icon"):
                         pkg.icon_path = info["local_icon"]
                         self.ico_lbl.setPixmap(load_app_icon(pkg.icon_path, pkg.icon_name, 80))
                     
+                    # Stats Bar'ı yeni boyut bilgileri ile yenile
+                    while self.stats_container.count():
+                        it = self.stats_container.takeAt(0)
+                        if it.widget(): it.widget().deleteLater()
+                    self.stats_container.addWidget(PisiStatsBox(pkg))
+
                     # FlatHub ekran görüntülerini göster
                     sc_paths = info.get("screenshots", [])
                     if sc_paths:
@@ -820,27 +843,73 @@ class AppDetailView(QWidget):
                                 self.gallery_container.addWidget(ss_card)
                         self.gallery_container.addStretch()
 
+                    # FlatHub verileri alındıktan sonra metadata grid'ini güncelle
+                    self._render_metadata_grid(pkg)
+
             QTimer.singleShot(10, _load_flathub_data)
         else:
-            # PiSi paketi için fotoğraf galerisi gösterilmez
+            # PiSi paketi açıklaması ve detayları
             self.desc_lbl.setText(pkg.description or pkg.summary or tr("no_description"))
+            if hasattr(self, "backend"):
+                def _load_pisi_screenshots():
+                    sc_paths = self.backend.fetch_pisi_screenshots(pkg.name, pkg.display_name)
+                    if sc_paths and hasattr(self, "package") and self.package and self.package.name == pkg.name:
+                        while self.gallery_container.count():
+                            it = self.gallery_container.takeAt(0)
+                            if it.widget(): it.widget().deleteLater()
+                        for sc_p in sc_paths[:4]:
+                            ss_card = QLabel()
+                            ss_card.setFixedHeight(220)
+                            ss_card.setCursor(Qt.CursorShape.PointingHandCursor)
+                            px = QPixmap(sc_p)
+                            if not px.isNull():
+                                ss_card.setPixmap(px.scaledToHeight(220, Qt.TransformationMode.SmoothTransformation))
+                                ss_card.setStyleSheet("border-radius: 12px; border: 1px solid transparent;")
+                                path_copy = sc_p
+                                ss_card.mousePressEvent = lambda ev, p=path_copy: self._open_image_viewer(p)
+                                self.gallery_container.addWidget(ss_card)
+                        self.gallery_container.addStretch()
+
+                QTimer.singleShot(10, _load_pisi_screenshots)
 
         # Metadata Grid Update
+        self._render_metadata_grid(pkg)
+
+    def _render_metadata_grid(self, pkg: PackageInfo):
         while self.meta_grid.count():
             it = self.meta_grid.takeAt(0)
             if it.widget(): it.widget().deleteLater()
 
-        origin_title = getattr(pkg, "origin", "Flatpak") if pkg.is_flatpak else tr("lupus_main_repo")
+        origin_title = getattr(pkg, "origin", "Flatpak") if pkg.is_flatpak else (pkg.origin or tr("lupus_main_repo"))
+        
         metas = [
             (tr("version"), pkg.version or "1.0.0"),
-            (tr("download_size"), pkg.download_size or "10.1 MB"),
-            (tr("required_space"), pkg.installed_size or "32.8 MB"),
+            (tr("license"), pkg.license or ("GPL" if not pkg.is_flatpak else "-")),
             (tr("type"), tr("flatpak_pkg") if pkg.is_flatpak else tr("pisi_pkg")),
-            (tr("category"), pkg.category.capitalize()),
-            (tr("license"), pkg.license or "GPL"),
             (tr("repo_origin"), origin_title),
-            (tr("developer"), pkg.developer or (tr("flathub_community") if pkg.is_flatpak else tr("lupus_community"))),
+            (tr("category"), pkg.category.capitalize() if pkg.category else "-"),
+            (tr("developer"), pkg.developer or tr("unknown_developer")),
         ]
+
+        if pkg.download_size:
+            metas.append((tr("download_size"), pkg.download_size))
+        if pkg.installed_size:
+            metas.append((tr("required_space"), pkg.installed_size))
+
+        if pkg.is_flatpak:
+            if pkg.homepage:
+                metas.append((tr("homepage"), f'<a href="{pkg.homepage}" style="color: {ThemeManager.accent_teal()}; text-decoration: none;">{pkg.homepage}</a>'))
+            if pkg.vcs_url:
+                metas.append((tr("vcs_url"), f'<a href="{pkg.vcs_url}" style="color: {ThemeManager.accent_teal()}; text-decoration: none;">{pkg.vcs_url}</a>'))
+        else:
+            if pkg.packager_name:
+                metas.append((tr("packager_name"), pkg.packager_name))
+            if pkg.packager_email:
+                metas.append((tr("packager_email"), f'<a href="mailto:{pkg.packager_email}" style="color: {ThemeManager.accent_teal()}; text-decoration: none;">{pkg.packager_email}</a>'))
+            if pkg.update_date:
+                metas.append((tr("update_date"), pkg.update_date))
+            if pkg.homepage:
+                metas.append((tr("homepage"), f'<a href="{pkg.homepage}" style="color: {ThemeManager.accent_teal()}; text-decoration: none;">{pkg.homepage}</a>'))
 
         for i, (k, v) in enumerate(metas):
             row = i // 4
@@ -853,6 +922,9 @@ class AppDetailView(QWidget):
             box.addWidget(kl)
 
             vl = QLabel(v)
+            vl.setTextFormat(Qt.TextFormat.RichText)
+            vl.setOpenExternalLinks(True)
+            vl.setWordWrap(True)
             vl.setStyleSheet(f"color: {ThemeManager.text_primary()}; font-size: 13px; font-weight: 700;")
             box.addWidget(vl)
 

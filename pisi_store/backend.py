@@ -5,7 +5,7 @@ Pisi Store Backend - LupuS İşletim Sistemi ve PiSi Paket Yöneticisi Veri Sağ
 import subprocess
 import os
 import xml.etree.ElementTree as ET
-import lzma
+import glob
 import json
 import hashlib
 import urllib.request
@@ -13,6 +13,8 @@ import urllib.error
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
+
+from .i18n import tr
 
 CACHE_DIR = Path.home() / ".cache" / "pisi-store"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -59,12 +61,12 @@ class PackageInfo:
     release: str = ""
     summary: str = ""
     description: str = ""
-    license: str = "GPL-3.0"
+    license: str = ""
     homepage: str = ""
-    packager_name: str = "LupuS Topluluğu"
-    packager_email: str = "packager@lupus-os.org"
-    developer: str = "Özgür Yazılım Geliştiricileri"
-    category: str = "utilities"
+    packager_name: str = ""
+    packager_email: str = ""
+    developer: str = ""
+    category: str = ""
     component: str = "main"
     is_a: str = "app:gui"
     icon_name: str = ""
@@ -73,23 +75,22 @@ class PackageInfo:
     has_update: bool = False
     new_version: str = ""
     rating: float = 4.5
-    downloads: int = 15200
-    download_size: str = "12.4 MB"
-    installed_size: str = "38.5 MB"
-    dependencies_count: int = 5
+    downloads: int = 0
+    download_size: str = ""
+    installed_size: str = ""
+    dependencies_count: int = 0
     tags: list = field(default_factory=list)
     is_flatpak: bool = False
     origin: str = "Pisi"
     screenshots: list = field(default_factory=list)
+    update_date: str = ""
+    vcs_url: str = ""
 
     def __post_init__(self):
         if not self.display_name:
-            self.display_name = self.name.capitalize()
+            self.display_name = self.name.capitalize() if self.name.islower() else self.name
 
 
-from .i18n import tr
-
-# LupuS Store Kategori Eşleştirmeleri
 def get_lupus_categories():
     return {
         "all": {"name": tr("nav_discover"), "icon": "plasma-search"},
@@ -106,14 +107,12 @@ def get_lupus_categories():
         "flatpak": {"name": tr("nav_flatpak"), "icon": "package-x-generic"},
     }
 
+
 LUPUS_CATEGORIES = get_lupus_categories()
 
 
-
-
-
 class PisiBackend:
-    """PiSi paket yöneticisi ile etkileşim sınıfı"""
+    """PiSi paket yöneticisi ve Flatpak entegrasyonu backend sınıfı"""
 
     def __init__(self):
         self._installed_packages: dict[str, PackageInfo] = {}
@@ -123,15 +122,7 @@ class PisiBackend:
         self._flatpak_loaded = False
 
     def _check_pisi(self) -> bool:
-        """Pisi paket yöneticisinin kullanılabilir olup olmadığını kontrol eder.
-        CLI komutu Python sürüm uyumsuzluğu nedeniyle çalışmayabilir,
-        bu yüzden doğrudan XML index dosyasını da kontrol eder."""
-        # Önce doğrudan index XML dosyasını kontrol et
-        import glob as _glob
-        index_files = _glob.glob("/var/lib/pisi/index/**/*.xml", recursive=True)
-        if index_files:
-            return True
-        # Sonra CLI'yi dene
+        """Pisi paket yöneticisinin kullanılabilir olup olmadığını kontrol eder."""
         try:
             result = subprocess.run(
                 ["pisi", "--version"],
@@ -158,27 +149,693 @@ class PisiBackend:
     def is_flatpak_available(self) -> bool:
         return self._flatpak_available
 
-    def _flatpak_category_map(self, categories_str: str) -> str:
-        """Flatpak AppStream kategorisini dahili kategori kimliğine dönüştürür."""
-        mapping = {
-            "AudioVideo": "multimedia",
-            "Audio": "multimedia",
-            "Video": "multimedia",
-            "Development": "development",
-            "Education": "education",
-            "Game": "games",
-            "Graphics": "graphics",
-            "Network": "internet",
-            "Office": "office",
-            "Science": "education",
-            "System": "system",
-            "Utility": "utilities",
-        }
-        for part in categories_str.split(";"):
-            part = part.strip()
-            if part in mapping:
-                return mapping[part]
+    def _load_installed_packages(self):
+        """Kurulu paketleri pisi CLI üzerinden okur."""
+        if not self._pisi_available:
+            return
+        try:
+            result = subprocess.run(
+                ["pisi", "list-installed"],
+                capture_output=True, text=True, timeout=60
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                self._parse_pisi_list_output(result.stdout, installed=True)
+        except Exception as e:
+            print(f"PiSi list-installed hatası: {e}")
+
+    def fetch_pisi_screenshots(self, pkg_name: str, display_name: str = "") -> list[str]:
+        """PiSi paketlerinin temsilî ekran görüntülerini internetten/AppStream'den çeker ve yerel önbelleğe alır."""
+        target_query = display_name or pkg_name
+        api_url = "https://flathub.org/api/v2/search"
+        payload = json.dumps({"query": target_query}).encode("utf-8")
+        req = urllib.request.Request(api_url, data=payload, headers={
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)',
+            'Content-Type': 'application/json'
+        })
+        
+        sc_urls = []
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data = json.loads(r.read().decode('utf-8'))
+                hits = data.get("hits", [])
+                best_id = ""
+                for h in hits:
+                    aid = h.get("app_id", "")
+                    aname = h.get("name", "")
+                    if pkg_name.lower() in aid.lower() or pkg_name.lower() in aname.lower():
+                        best_id = aid
+                        break
+                if not best_id and hits:
+                    best_id = hits[0].get("app_id")
+                    
+                if best_id:
+                    app_url = f"https://flathub.org/api/v2/appstream/{best_id}"
+                    app_req = urllib.request.Request(app_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(app_req, timeout=5) as app_r:
+                        app_data = json.loads(app_r.read().decode('utf-8'))
+                        scs_data = app_data.get("screenshots", [])
+                        for sc in scs_data:
+                            if isinstance(sc, dict):
+                                if sc.get("desktop"):
+                                    sc_urls.append(sc.get("desktop"))
+                                elif sc.get("sizes") and isinstance(sc.get("sizes"), list):
+                                    sizes = sc.get("sizes")
+                                    max_url = max(sizes, key=lambda s: int(s.get("width", 0)) if isinstance(s, dict) and str(s.get("width","0")).isdigit() else 0).get("src") if isinstance(sizes[0], dict) else sizes[-1]
+                                    if isinstance(max_url, str):
+                                        sc_urls.append(max_url)
+                                    elif isinstance(sizes[-1], dict) and sizes[-1].get("src"):
+                                        sc_urls.append(sizes[-1].get("src"))
+                                elif sc.get("src"):
+                                    sc_urls.append(sc.get("src"))
+                            elif isinstance(sc, str):
+                                sc_urls.append(sc)
+        except Exception as e:
+            print(f"PiSi ekran görüntüsü arama hatası ({pkg_name}): {e}")
+            
+        local_paths = []
+        for sc_url in sc_urls[:4]:
+            if not sc_url:
+                continue
+            try:
+                sc_hash = hashlib.md5(sc_url.encode('utf-8')).hexdigest()
+                ext = os.path.splitext(sc_url.split('?')[0])[1] or ".png"
+                cached_p = ICON_CACHE_DIR / f"sc_pisi_{sc_hash}{ext}"
+                if not cached_p.exists():
+                    ic_req = urllib.request.Request(sc_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(ic_req, timeout=5) as ic_resp:
+                        with open(cached_p, 'wb') as f:
+                            f.write(ic_resp.read())
+                local_paths.append(str(cached_p))
+            except Exception as e:
+                print(f"Ekran görüntüsü indirme hatası: {e}")
+                
+        return local_paths
+
+    def _get_pisi_pspec_map(self) -> dict[str, str]:
+        """PisiLinux GitHub depolarındaki pspec.xml dosya yollarının haritasını yükler/önbellekler."""
+        map_file = CACHE_DIR / "pisi-pspec-map.json"
+        if map_file.exists():
+            try:
+                import time
+                if time.time() - map_file.stat().st_mtime < 86400:  # 24 saat geçerli
+                    with open(map_file, "r", encoding="utf-8") as f:
+                        return json.load(f)
+            except Exception:
+                pass
+
+        pspec_map = {}
+        for repo in ["main", "core"]:
+            url = f"https://api.github.com/repos/pisilinux/{repo}/git/trees/master?recursive=1"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            try:
+                with urllib.request.urlopen(req, timeout=6) as r:
+                    data = json.loads(r.read().decode('utf-8'))
+                    tree = data.get("tree", [])
+                    for item in tree:
+                        path = item.get("path", "")
+                        if path.endswith("pspec.xml"):
+                            parts = path.split("/")
+                            pkg_name = parts[-2] if len(parts) >= 2 else ""
+                            if pkg_name and (pkg_name not in pspec_map or repo in ["main", "core"]):
+                                pspec_map[pkg_name] = f"{repo}/master/{path}"
+            except Exception as e:
+                print(f"Pisi pspec haritası oluşturma hatası ({repo}): {e}")
+
+        if pspec_map:
+            try:
+                with open(map_file, "w", encoding="utf-8") as f:
+                    json.dump(pspec_map, f, ensure_ascii=False)
+            except Exception:
+                pass
+
+        return pspec_map
+
+    def _fetch_pisi_repo_details(self, pkg_name: str) -> dict[str, str]:
+        """PisiLinux GitHub reposundan paketin gerçek pspec.xml verilerini çeker."""
+        pspec_map = self._get_pisi_pspec_map()
+        rel_path = pspec_map.get(pkg_name)
+        if not rel_path:
+            return {}
+
+        raw_url = f"https://raw.githubusercontent.com/pisilinux/{rel_path}"
+        try:
+            req = urllib.request.Request(raw_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                tree = ET.fromstring(resp.read())
+                homepage = tree.findtext("Source/Homepage") or ""
+                
+                updates = tree.findall("History/Update")
+                name, email, date = "", "", ""
+                if updates:
+                    upd = updates[0]
+                    name = (upd.findtext("Name") or "").strip()
+                    email = (upd.findtext("Email") or "").strip()
+                    date = (upd.findtext("Date") or "").strip()
+
+                if not name or "Community" in name or "Admins" in name:
+                    packager = tree.find("Source/Packager")
+                    if packager is not None:
+                        p_name = (packager.findtext("Name") or "").strip()
+                        p_email = (packager.findtext("Email") or "").strip()
+                        if p_name and "Community" not in p_name:
+                            name = p_name
+                        if p_email and "admin@" not in p_email:
+                            email = p_email
+
+                return {
+                    "packager_name": name,
+                    "packager_email": email,
+                    "update_date": date,
+                    "homepage": homepage
+                }
+        except Exception as e:
+            print(f"Pisi repo detay çekme hatası ({pkg_name}): {e}")
+        return {}
+
+    def _enrich_pisi_package_info(self, pkg: PackageInfo):
+        """pisi info + pisi depo pspec.xml üzerinden paketin ayrıntılarını ve gerçek paketçi verilerini yükler."""
+        if not self._pisi_available or pkg.is_flatpak:
+            return
+        try:
+            # --- pisi info ---
+            res = subprocess.run(["pisi", "info", pkg.name], capture_output=True, text=True, timeout=10)
+            if res.returncode == 0 and res.stdout:
+                for line in res.stdout.splitlines():
+                    line_str = line.strip()
+                    if not line_str or line_str.startswith("Yüklü paket") or "deposunda bulundu" in line_str or line_str.endswith("bulunamadı."):
+                        continue
+                    if ":" in line_str:
+                        parts = line_str.split(":", 1)
+                        key_raw = parts[0].strip()
+                        val_raw = parts[1].strip()
+                        if "İsim" in key_raw or "Name" in key_raw:
+                            if "," in val_raw:
+                                for sub in val_raw.split(","):
+                                    if ":" in sub:
+                                        sk, sv = sub.split(":", 1)
+                                        sk, sv = sk.strip(), sv.strip()
+                                        if ("sürüm" in sk or "version" in sk) and sv:
+                                            pkg.version = sv
+                                        elif ("yayım" in sk or "release" in sk) and sv:
+                                            pkg.release = sv
+                        elif "Özet" in key_raw or "Summary" in key_raw:
+                            if val_raw and val_raw != "Açıklama yok":
+                                pkg.summary = val_raw
+                        elif "Açıklama" in key_raw or "Description" in key_raw:
+                            if val_raw:
+                                pkg.description = val_raw
+                        elif "Lisanslar" in key_raw or "Licenses" in key_raw:
+                            if val_raw:
+                                pkg.license = val_raw
+                        elif "Bileşen" in key_raw or "Component" in key_raw:
+                            if val_raw:
+                                pkg.component = val_raw
+                                pkg.category = self._map_to_category(pkg.name, part_of=val_raw, summary=pkg.summary)
+                        elif "Bağımlılıkları" in key_raw or "Dependencies" in key_raw:
+                            deps = [d for d in val_raw.split() if d]
+                            pkg.dependencies_count = len(deps)
+                        elif "Mimari" in key_raw or "Architecture" in key_raw:
+                            for sub in val_raw.split(","):
+                                if "Yerleşik Boyut" in sub or "Installed Size" in sub:
+                                    pkg.installed_size = sub.split(":", 1)[1].strip() if ":" in sub else ""
+                                elif "Paket Boyutu" in sub or "Package Size" in sub:
+                                    pkg.download_size = sub.split(":", 1)[1].strip() if ":" in sub else ""
+                        elif "Dağıtım" in key_raw or "Distribution" in key_raw:
+                            dist_val = val_raw.split(",")[0].strip()
+                            if dist_val:
+                                pkg.origin = dist_val
+        except Exception as e:
+            print(f"Paket detay yükleme hatası ({pkg.name}): {e}")
+
+        # --- Repodan Gerçek Paketleyici, E-Posta, Güncelleme Tarihi ve Anasayfa Verilerini Çek ---
+        repo_info = self._fetch_pisi_repo_details(pkg.name)
+        if repo_info:
+            if repo_info.get("packager_name"):
+                pkg.packager_name = repo_info["packager_name"]
+            if repo_info.get("packager_email"):
+                pkg.packager_email = repo_info["packager_email"]
+            if repo_info.get("update_date"):
+                pkg.update_date = repo_info["update_date"]
+            if repo_info.get("homepage"):
+                pkg.homepage = repo_info["homepage"]
+
+        # Fallback: Repodan e-posta/isim alınamadıysa pisi blame kullan
+        if not pkg.packager_name or not pkg.packager_email:
+            try:
+                blame = subprocess.run(["pisi", "blame", pkg.name], capture_output=True, text=True, timeout=10)
+                if blame.returncode == 0 and blame.stdout:
+                    for line in blame.stdout.splitlines():
+                        line_str = line.strip()
+                        if ("Yayım Güncelleyen" in line_str or "Updated By" in line_str) and ":" in line_str:
+                            val = line_str.split(":", 1)[1].strip()
+                            if "<" in val and ">" in val:
+                                name_part = val[:val.index("<")].strip()
+                                email_part = val[val.index("<")+1:val.index(">")].strip()
+                                if name_part and not pkg.packager_name:
+                                    pkg.packager_name = name_part
+                                if email_part and not pkg.packager_email:
+                                    pkg.packager_email = email_part
+                            elif val and not pkg.packager_name:
+                                pkg.packager_name = val
+                        elif ("Güncelleme Tarihi" in line_str or "Update Date" in line_str) and ":" in line_str:
+                            date_val = line_str.split(":", 1)[1].strip()
+                            if date_val and not pkg.update_date:
+                                pkg.update_date = date_val
+            except Exception as e:
+                print(f"Paket blame yükleme hatası ({pkg.name}): {e}")
+
+        # --- Geliştirici (Developer) Otomatik Çıkarımı ---
+        if not pkg.developer:
+            url = (pkg.homepage or "").lower()
+            comp = (pkg.component or "").lower()
+            
+            if "mozilla.org" in url:
+                pkg.developer = "Mozilla Foundation"
+            elif "gnu.org" in url:
+                pkg.developer = "GNU Project"
+            elif "kde.org" in url or "desktop.kde" in comp or "kde" in comp:
+                pkg.developer = "KDE Community"
+            elif "gnome.org" in url or "desktop.gnome" in comp or "gnome" in comp:
+                pkg.developer = "GNOME Project"
+            elif "xfce.org" in url or "desktop.xfce" in comp:
+                pkg.developer = "Xfce Development Team"
+            elif "videolan.org" in url:
+                pkg.developer = "VideoLAN Project"
+            elif "python.org" in url:
+                pkg.developer = "Python Software Foundation"
+            elif "freedesktop.org" in url:
+                pkg.developer = "Freedesktop.org"
+            elif "kernel.org" in url:
+                pkg.developer = "Linux Kernel Organization"
+            elif "apache.org" in url:
+                pkg.developer = "Apache Software Foundation"
+            elif "qt.io" in url:
+                pkg.developer = "The Qt Company"
+            elif pkg.homepage:
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(pkg.homepage)
+                    netloc = parsed.netloc or parsed.path.split('/')[0]
+                    if netloc.startswith("www."):
+                        netloc = netloc[4:]
+                    if "github.com/" in pkg.homepage:
+                        parts = parsed.path.strip('/').split('/')
+                        if len(parts) >= 1 and parts[0]:
+                            pkg.developer = f"GitHub ({parts[0]})"
+                    elif "gitlab.com/" in pkg.homepage:
+                        parts = parsed.path.strip('/').split('/')
+                        if len(parts) >= 1 and parts[0]:
+                            pkg.developer = f"GitLab ({parts[0]})"
+                    elif netloc:
+                        pkg.developer = netloc.capitalize()
+                except Exception:
+                    pass
+            
+            if not pkg.developer and pkg.packager_name:
+                pkg.developer = pkg.packager_name
+            if not pkg.developer:
+                pkg.developer = "Pisi Linux Topluluğu"
+
+    def _parse_pisi_list_output(self, output: str, installed: bool = False):
+        lines = output.strip().splitlines()
+        for line in lines:
+            line_str = line.strip()
+            if not line_str or line_str.startswith("Depodaki") or line_str.startswith("Total"):
+                continue
+            if line_str.startswith("🌐"):
+                line_str = line_str[1:].strip()
+
+            if " - " in line_str:
+                parts = line_str.split(" - ", 1)
+                name = parts[0].strip()
+                summary_or_ver = parts[1].strip()
+                if not name:
+                    continue
+                version = ""
+                summary = ""
+                if summary_or_ver.startswith("v"):
+                    version = summary_or_ver[1:].strip()
+                else:
+                    summary = summary_or_ver
+            else:
+                parts = line_str.split()
+                if not parts:
+                    continue
+                name = parts[0].strip()
+                version = ""
+                if len(parts) > 1 and parts[1].startswith("v"):
+                    version = parts[1][1:].strip()
+                summary = ""
+
+            icon_path = self._find_icon(name)
+            category = self._map_to_category(name, summary=summary)
+            pkg = PackageInfo(
+                name=name,
+                display_name=name.capitalize() if name.islower() else name,
+                version=version,
+                summary=summary,
+                category=category,
+                icon_name=name,
+                icon_path=icon_path,
+                installed=installed
+            )
+
+            if installed:
+                self._installed_packages[name] = pkg
+            else:
+                self._available_packages[name] = pkg
+
+    def _map_to_category(self, name: str, part_of: str = "", summary: str = "") -> str:
+        p = (part_of or "").lower()
+        n = (name or "").lower()
+        s = (summary or "").lower()
+
+        if any(x in p for x in ["devel", "code", "prog", "editor", "ide", "git"]) or any(x in n for x in ["code", "studio", "atom", "antigravity", "ide"]):
+            return "development"
+        if any(x in p for x in ["net", "web", "browser", "mail", "conn", "remote"]) or any(x in n for x in ["chrome", "firefox", "desk", "browser", "telegram"]):
+            return "internet"
+        if any(x in p for x in ["sound", "video", "tv", "media", "audio"]) or any(x in n for x in ["vlc", "player", "music", "video", "obs"]):
+            return "multimedia"
+        if any(x in p for x in ["graph", "image", "draw", "pdf"]) or any(x in n for x in ["gimp", "inkscape", "krita", "image"]):
+            return "graphics"
+        if any(x in p for x in ["game"]) or any(x in n for x in ["game", "steam", "craft", "kart", "tux"]):
+            return "games"
+        if any(x in p for x in ["office", "word", "calc", "writer"]) or any(x in n for x in ["office", "pdf", "calc"]):
+            return "office"
+        if any(x in p for x in ["science", "edu", "elec"]) or any(x in n for x in ["arduino", "math"]):
+            return "education"
+        if any(x in p for x in ["system", "admin", "base", "kernel", "root"]) or any(x in n for x in ["htop", "neofetch", "gparted"]):
+            return "system"
+
         return "utilities"
+
+    def _find_icon(self, icon_name: str) -> str:
+        if not icon_name:
+            return ""
+
+        for search_path in ICON_SEARCH_PATHS:
+            for ext in ICON_EXTENSIONS:
+                icon_file = Path(search_path) / f"{icon_name}{ext}"
+                if icon_file.exists():
+                    return str(icon_file)
+
+        return ""
+
+    def _get_multilang_text(self, element, tag: str, preferred_lang: str = "tr") -> str:
+        """Çok dilli XML etiketlerinden tercih edilen dildeki metni döndürür."""
+        XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
+        values = {}
+        for child in element:
+            if child.tag == tag:
+                lang = child.attrib.get(XML_LANG, child.attrib.get("lang", "en"))
+                text = (child.text or "").strip()
+                if text:
+                    values[lang] = text
+        return values.get(preferred_lang) or values.get("en") or next(iter(values.values()), "")
+
+    def _load_from_pisi_repo_index(self) -> bool:
+        """PiSi deposu indeks XML dosyalarından paketleri ve kategorileri okur."""
+        index_files = (
+            glob.glob("/var/lib/pisi/index/**/*.xml", recursive=True)
+            + glob.glob("/var/cache/pisi/**/*.xml", recursive=True)
+        )
+        index_files = [f for f in index_files if f.endswith(".xml")]
+        if not index_files:
+            return False
+
+        loaded_count = 0
+        for idx_file in index_files:
+            try:
+                tree = ET.parse(idx_file)
+                root = tree.getroot()
+                packages = [c for c in root if c.tag == "Package"]
+                if not packages:
+                    packages = root.findall(".//Package")
+
+                for p in packages:
+                    name = (p.findtext("Name") or "").strip()
+                    if not name:
+                        continue
+
+                    summary = self._get_multilang_text(p, "Summary")
+                    desc = self._get_multilang_text(p, "Description")
+                    part_of = (p.findtext("PartOf") or "").strip()
+                    icon = (p.findtext("Icon") or "").strip()
+                    license_str = (p.findtext("License") or "").strip()
+                    installed_size_raw = (p.findtext("InstalledSize") or "Undefined").strip()
+                    download_size_raw = (p.findtext("PackageSize") or "Undefined").strip()
+
+                    def _to_mb(raw: str) -> str:
+                        try:
+                            val = int(raw)
+                            if val > 0:
+                                mb = round(val / (1024 * 1024), 1)
+                                return f"{mb} MB"
+                        except (ValueError, TypeError):
+                            pass
+                        return ""
+
+                    inst_size_str = _to_mb(installed_size_raw)
+                    dl_size_str = _to_mb(download_size_raw)
+
+                    version = "1.0.0"
+                    hist = p.find("History")
+                    if hist is not None:
+                        upd = hist.find("Update")
+                        if upd is not None:
+                            version = (upd.findtext("Version") or "1.0.0").strip()
+
+                    deps_el = p.find("RuntimeDependencies")
+                    dep_count = len(list(deps_el)) if deps_el is not None else 0
+
+                    cat = self._map_to_category(name, part_of=part_of, summary=summary)
+                    icon_path = self._find_icon(icon or name)
+
+                    pkg = PackageInfo(
+                        name=name,
+                        display_name=name.capitalize() if name.islower() else name,
+                        summary=summary or desc[:80],
+                        description=desc or summary,
+                        version=version,
+                        category=cat,
+                        icon_name=icon or name,
+                        icon_path=icon_path,
+                        installed_size=inst_size_str,
+                        download_size=dl_size_str,
+                        license=license_str,
+                        dependencies_count=dep_count,
+                    )
+                    self._available_packages[name] = pkg
+                    loaded_count += 1
+            except Exception as e:
+                print(f"Index XML okuma hatası {idx_file}: {e}")
+
+        return loaded_count > 0
+
+    def load_available_packages(self, progress_callback=None) -> dict[str, PackageInfo]:
+        has_pisi_pkgs = any(not pkg.is_flatpak for pkg in self._available_packages.values())
+        if has_pisi_pkgs:
+            return self._available_packages
+
+        if self._load_index_from_cache():
+            if progress_callback:
+                progress_callback(100, "Önbellekten yüklendi")
+            return self._available_packages
+
+        if self._pisi_available:
+            if progress_callback:
+                progress_callback(20, "PiSi depolarından paketler yükleniyor...")
+            self._load_from_pisi_available(progress_callback)
+
+        for name in self._available_packages:
+            if name in self._installed_packages:
+                self._available_packages[name].installed = True
+
+        self._save_index_to_cache()
+        return self._available_packages
+
+    def _load_from_pisi_available(self, progress_callback=None):
+        if self._load_from_pisi_repo_index():
+            if progress_callback:
+                progress_callback(90, "PiSi deposu indeksinden paketler yüklendi.")
+            return
+
+        try:
+            result = subprocess.run(
+                ["pisi", "list-available"],
+                capture_output=True, text=True, timeout=120
+            )
+
+            if result.returncode == 0:
+                self._parse_pisi_list_output(result.stdout, installed=False)
+                for pkg in self._available_packages.values():
+                    if not pkg.icon_path:
+                        pkg.icon_path = self._find_icon(pkg.icon_name or pkg.name)
+        except Exception as e:
+            print(f"PiSi depo paket yükleme hatası: {e}")
+
+    def _run_pisi_cmd(self, pisi_args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
+        """Pisi komutunu çalıştırır (gerektiğinde pkexec ile)."""
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            cmd = ["pisi"] + pisi_args
+        else:
+            cmd = ["pkexec", "pisi"] + pisi_args
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+    def update_repo_and_sync_cache(self, progress_callback=None, update_repo=True) -> bool:
+        """Pisi paket deposunu günceller ve önbelleği yeniler."""
+        if progress_callback:
+            if update_repo:
+                progress_callback(5, "PiSi depoları güncelleniyor...")
+            else:
+                progress_callback(5, "Önbellek kontrol ediliyor...")
+
+        if update_repo:
+            try:
+                self._run_pisi_cmd(["update-repo"], timeout=60)
+            except Exception as e:
+                print(f"Pisi depo güncelleme hatası: {e}")
+
+        index_files = (
+            glob.glob("/var/lib/pisi/index/**/*.xml", recursive=True)
+            + glob.glob("/var/cache/pisi/**/*.xml", recursive=True)
+        )
+        index_files = [f for f in index_files if f.endswith(".xml")]
+
+        cache_needs_refresh = False
+        if not INDEX_CACHE_FILE.exists():
+            cache_needs_refresh = True
+        elif index_files:
+            cache_mtime = INDEX_CACHE_FILE.stat().st_mtime
+            for f in index_files:
+                try:
+                    if os.path.getmtime(f) > cache_mtime:
+                        cache_needs_refresh = True
+                        break
+                except OSError:
+                    pass
+
+        if cache_needs_refresh and INDEX_CACHE_FILE.exists():
+            if progress_callback:
+                progress_callback(15, "Depoda değişiklik tespit edildi, önbellek yenileniyor...")
+            try:
+                INDEX_CACHE_FILE.unlink()
+            except Exception as e:
+                print(f"Önbellek silme hatası: {e}")
+
+        return cache_needs_refresh
+
+    def check_for_updates(self, progress_callback=None, update_repo=True) -> tuple[int, list[str], str]:
+        """Pisi depolarını günceller ve güncellenebilir paketleri tespit eder."""
+        error_msg = ""
+        upgradable_names = []
+
+        if update_repo:
+            if progress_callback:
+                progress_callback(10, "PiSi depoları güncelleniyor...")
+
+            if self._pisi_available:
+                try:
+                    res = self._run_pisi_cmd(["update-repo"], timeout=60)
+                    if res.returncode != 0 and res.stderr:
+                        print(f"pisi update-repo uyarısı: {res.stderr}")
+                except Exception as e:
+                    error_msg = str(e)
+                    print(f"Pisi update-repo hatası: {e}")
+
+        if progress_callback:
+            progress_callback(50, "Güncellemeler kontrol ediliyor...")
+
+        if self._pisi_available:
+            try:
+                result = subprocess.run(
+                    ["pisi", "list-upgrades"], capture_output=True, text=True, timeout=30
+                )
+                if result.returncode == 0 and result.stdout:
+                    for line in result.stdout.splitlines():
+                        line_str = line.strip()
+                        if not line_str or line_str.startswith("Sistem") or line_str.startswith("System") or line_str.startswith("Tüm"):
+                            continue
+                        if line_str.startswith("🌐"):
+                            line_str = line_str[1:].strip()
+                        parts = line_str.split(" - ", 1) if " - " in line_str else line_str.split()
+                        pkg_name = parts[0].strip()
+                        if pkg_name and pkg_name not in upgradable_names:
+                            upgradable_names.append(pkg_name)
+                            if pkg_name in self._installed_packages:
+                                self._installed_packages[pkg_name].has_update = True
+                            if pkg_name in self._available_packages:
+                                self._available_packages[pkg_name].has_update = True
+            except Exception as e:
+                print(f"Pisi CLI list-upgrades hatası: {e}")
+
+        if self._flatpak_available:
+            if progress_callback:
+                progress_callback(90, "Flatpak güncellemeleri kontrol ediliyor...")
+            flatpak_updates = self.check_flatpak_updates()
+            for key in flatpak_updates:
+                if key not in upgradable_names:
+                    upgradable_names.append(key)
+
+        if progress_callback:
+            progress_callback(100, "Güncelleme kontrolü tamamlandı.")
+
+        return len(upgradable_names), upgradable_names, error_msg
+
+    def is_cache_valid(self) -> bool:
+        """Önbellek geçerli mi kontrol eder."""
+        if not INDEX_CACHE_FILE.exists():
+            return False
+        import time
+        file_age = time.time() - INDEX_CACHE_FILE.stat().st_mtime
+        return file_age <= INDEX_CACHE_TTL
+
+    def _load_index_from_cache(self) -> bool:
+        if not INDEX_CACHE_FILE.exists():
+            return False
+
+        import time
+        file_age = time.time() - INDEX_CACHE_FILE.stat().st_mtime
+        if file_age > INDEX_CACHE_TTL:
+            return False
+
+        try:
+            with open(INDEX_CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            loaded = 0
+            for pkg_data in data:
+                # Sadece gerçek pisi deposundan gelen paketleri yükle
+                if pkg_data.get("_source") != "pisi_repo":
+                    continue
+                pkg_data.pop("_source", None)
+                pkg_data["is_flatpak"] = False
+                # PackageInfo'da olmayan field varsa temizle
+                valid_fields = {f.name for f in PackageInfo.__dataclass_fields__.values()}
+                pkg_data = {k: v for k, v in pkg_data.items() if k in valid_fields}
+                pkg = PackageInfo(**pkg_data)
+                self._available_packages[pkg.name] = pkg
+                loaded += 1
+
+            return loaded > 0
+        except Exception:
+            return False
+
+    def _save_index_to_cache(self):
+        try:
+            data = []
+            for pkg in self._available_packages.values():
+                if pkg.is_flatpak:
+                    continue
+                d = dict(pkg.__dict__)
+                d["_source"] = "pisi_repo"  # gerçek repo markeri
+                data.append(d)
+            with open(INDEX_CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Önbellek kaydetme hatası: {e}")
+
+    # --- Flatpak Yönetimi ---
 
     def _load_flatpaks(self):
         """Sistemde kurulu ve depodaki Flatpak uygulamalarını yükler."""
@@ -190,7 +847,7 @@ class PisiBackend:
             self._flatpak_loaded = True
 
     def _load_installed_flatpaks(self):
-        """Kurulu Flatpak uygulamalarını ve platform/runtime bileşenlerini listeler."""
+        """Kurulu Flatpak uygulamalarını ve bileşenlerini listeler."""
         try:
             result = subprocess.run(
                 ["flatpak", "list", "--columns=application,name,version,branch,origin,ref"],
@@ -234,7 +891,7 @@ class PisiBackend:
             print(f"Flatpak kurulu paket listesi hatası: {e}")
 
     def check_flatpak_updates(self) -> list[str]:
-        """Güncellenebilir Flatpak uygulamalarını ve platform/runtime bileşenlerini döndürür."""
+        """Güncellenebilir Flatpak uygulamalarını döndürür."""
         if not self._flatpak_available:
             return []
         try:
@@ -293,7 +950,7 @@ class PisiBackend:
             return []
 
     def _fetch_flathub_popularity(self) -> dict[str, tuple[int, int, str]]:
-        """FlatHub API'sinden popülerlik (sıralama, son ayki indirilme sayısı ve ikon URL'si) verilerini çeker."""
+        """FlatHub API'sinden popülerlik verilerini çeker."""
         popular_info = {}
         try:
             url = "https://flathub.org/api/v2/collection/popular?page=1&per_page=250"
@@ -313,7 +970,7 @@ class PisiBackend:
         return popular_info
 
     def _get_or_download_flathub_icon(self, icon_url: str) -> str:
-        """FlatHub ikon URL'sini yerel önbelleğe indirir ve dosya yolunu döndürür."""
+        """FlatHub ikon URL'sini yerel önbelleğe indirir."""
         if not icon_url:
             return ""
         try:
@@ -329,11 +986,30 @@ class PisiBackend:
         except Exception:
             return ""
 
+    def _fetch_flatpak_sizes(self, app_id: str) -> tuple[str, str]:
+        """Flatpak uygulamasının indirme ve kurulu boyutunu flatpak CLI ile çeker."""
+        real_id = app_id.removeprefix("flatpak:")
+        dl_size, inst_size = "", ""
+        try:
+            res = subprocess.run(["flatpak", "remote-info", "flathub", real_id], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0 and res.stdout:
+                for line in res.stdout.splitlines():
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        k_lower, v_val = k.strip().lower(), v.strip()
+                        if "ndirme" in k_lower or "download" in k_lower:
+                            dl_size = v_val
+                        elif "kurulu" in k_lower or "installed" in k_lower:
+                            inst_size = v_val
+        except Exception:
+            pass
+        return dl_size, inst_size
+
     def _load_available_flatpaks(self):
-        """Flatpak remote'larındaki mevcut uygulamaları listeler ve FlatHub popülerliğine göre sıralar."""
+        """Flatpak depolarındaki uygulamaları listeler."""
         try:
             result = subprocess.run(
-                ["flatpak", "remote-ls", "--app", "--columns=application,name,version,origin"],
+                ["flatpak", "remote-ls", "--app", "--columns=application,name,version,origin,download-size,installed-size"],
                 capture_output=True, text=True, timeout=30
             )
             if result.returncode != 0 or not result.stdout.strip():
@@ -347,9 +1023,12 @@ class PisiBackend:
                 if len(parts) < 1:
                     continue
                 app_id = parts[0]
-                display_name = parts[1] if len(parts) > 1 else app_id
+                display_name = parts[1] if len(parts) > 1 and parts[1] else app_id
                 version = parts[2] if len(parts) > 2 else ""
                 origin = parts[3].capitalize() if len(parts) > 3 and parts[3] else "FlatHub"
+                dl_size = parts[4] if len(parts) > 4 else ""
+                inst_size = parts[5] if len(parts) > 5 else ""
+
                 key = f"flatpak:{app_id}"
                 if key in self._available_packages:
                     continue
@@ -377,11 +1056,12 @@ class PisiBackend:
                     installed=False,
                     is_flatpak=True,
                     origin=origin,
-                    downloads=downloads
+                    downloads=downloads,
+                    download_size=dl_size,
+                    installed_size=inst_size
                 )
                 flatpak_pkgs.append((rank, pkg))
 
-            # FlatHub popülerlik sıralamasına göre diz (önce popüler olanlar, rank 1..N)
             flatpak_pkgs.sort(key=lambda x: x[0])
 
             for _, pkg in flatpak_pkgs:
@@ -391,8 +1071,10 @@ class PisiBackend:
             print(f"Flatpak depo listesi hatası: {e}")
 
     def fetch_flathub_info(self, app_id: str) -> dict:
-        """FlatHub API (v2) üzerinden uygulamanın ikon, açıklama ve ekran görüntülerini indirir."""
+        """FlatHub API (v2) ve flatpak CLI üzerinden uygulamanın ikon, açıklama, boyutlar ve görsellerini indirir."""
         real_id = app_id.removeprefix("flatpak:")
+        dl_size, inst_size = self._fetch_flatpak_sizes(real_id)
+
         api_url = f"https://flathub.org/api/v2/appstream/{real_id}"
         req = urllib.request.Request(
             api_url,
@@ -411,11 +1093,9 @@ class PisiBackend:
                     screenshots = []
                     for sc in screenshots_data:
                         if isinstance(sc, dict):
-                            # Öncelik 1: Orijinal/Desktop yüksek çözünürlüklü görsel
                             if sc.get("desktop"):
                                 screenshots.append(sc.get("desktop"))
                             elif sc.get("sizes") and isinstance(sc.get("sizes"), list):
-                                # Öncelik 2: En büyük boyutu seç (genellikle son eleman)
                                 sizes = sc.get("sizes")
                                 max_size_url = max(sizes, key=lambda s: s.get("width", 0) if isinstance(s, dict) else 0).get("src") if isinstance(sizes[0], dict) else sizes[-1]
                                 if isinstance(max_size_url, str):
@@ -456,25 +1136,46 @@ class PisiBackend:
                                     f.write(ic_resp.read())
                         local_icon = str(cached_path)
 
+                    # Ek meta alanlar
+                    project_license = data.get("project_license", "")
+                    urls_data = data.get("urls") or {}
+                    homepage = urls_data.get("homepage", "")
+                    vcs_browser = urls_data.get("vcs_browser", "")
+                    categories = data.get("categories") or []
+                    if isinstance(categories, list):
+                        categories_str = ", ".join(categories[:4])
+                    else:
+                        categories_str = str(categories)
+
                     return {
                         "icon_url": icon_url,
                         "local_icon": local_icon,
                         "summary": summary,
                         "description": description,
                         "developer": developer,
-                        "screenshots": local_screenshots
+                        "screenshots": local_screenshots,
+                        "license": project_license,
+                        "homepage": homepage,
+                        "vcs_url": vcs_browser,
+                        "categories": categories_str,
+                        "download_size": dl_size,
+                        "installed_size": inst_size,
                     }
         except Exception as e:
             print(f"FlatHub API hatası ({real_id}): {e}")
-        return {}
+
+        return {
+            "download_size": dl_size,
+            "installed_size": inst_size,
+        }
 
     def _find_flatpak_icon(self, app_id: str) -> str:
         """Flatpak uygulama ikonunu sistemde arar."""
         icon_dirs = [
-            f"/var/lib/flatpak/exports/share/icons/hicolor/scalable/apps",
-            f"/var/lib/flatpak/exports/share/icons/hicolor/256x256/apps",
-            f"/var/lib/flatpak/exports/share/icons/hicolor/128x128/apps",
-            f"/var/lib/flatpak/exports/share/icons/hicolor/64x64/apps",
+            "/var/lib/flatpak/exports/share/icons/hicolor/scalable/apps",
+            "/var/lib/flatpak/exports/share/icons/hicolor/256x256/apps",
+            "/var/lib/flatpak/exports/share/icons/hicolor/128x128/apps",
+            "/var/lib/flatpak/exports/share/icons/hicolor/64x64/apps",
             os.path.expanduser("~/.local/share/flatpak/exports/share/icons/hicolor/scalable/apps"),
             os.path.expanduser("~/.local/share/flatpak/exports/share/icons/hicolor/64x64/apps"),
         ]
@@ -483,7 +1184,6 @@ class PisiBackend:
                 p = os.path.join(d, app_id + ext)
                 if os.path.exists(p):
                     return p
-        # Fallback: app name kısmı
         short = app_id.split(".")[-1]
         return self._find_icon(short)
 
@@ -509,7 +1209,7 @@ class PisiBackend:
         return "utilities"
 
     def install_flatpak(self, app_id: str) -> tuple[bool, str]:
-        """Flatpak uygulaması kurar. app_id 'flatpak:<ID>' formatındadır."""
+        """Flatpak uygulaması kurar."""
         real_id = app_id.removeprefix("flatpak:")
         try:
             result = subprocess.run(
@@ -528,7 +1228,7 @@ class PisiBackend:
             return False, str(e)
 
     def remove_flatpak(self, app_id: str) -> tuple[bool, str]:
-        """Flatpak uygulaması kaldırır. app_id 'flatpak:<ID>' formatındadır."""
+        """Flatpak uygulaması kaldırır."""
         real_id = app_id.removeprefix("flatpak:")
         try:
             result = subprocess.run(
@@ -547,7 +1247,7 @@ class PisiBackend:
         except Exception as e:
             return False, str(e)
 
-
+    # --- Genel API Metodları ---
 
     def get_installed_packages(self) -> dict[str, PackageInfo]:
         if self._installed_packages:
@@ -556,673 +1256,6 @@ class PisiBackend:
         self._load_installed_packages()
         self._load_flatpaks()
         return self._installed_packages
-
-    def _load_installed_packages(self):
-        """Kurulu paketleri pisi veritabanından okur."""
-        # Önce pisi Python API'si ile dene
-        if self._load_installed_from_pisi_db():
-            return
-        # CLI dene (Python 3.14 ile kırık olabilir, ama deneyelim)
-        try:
-            result = subprocess.run(
-                ["pisi", "list-installed", "--long"],
-                capture_output=True, text=True, timeout=60
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                self._parse_pisi_list_output(result.stdout, installed=True)
-                return
-        except Exception as e:
-            print(f"PiSi list-installed hatası: {e}")
-        # Kurulu paket bulunamadı — _available_packages'ı kirletmemek için
-        # burada demo yükleme yapmıyoruz; demo yalnızca available_packages boşsa çalışır.
-
-    def _load_installed_from_pisi_db(self) -> bool:
-        """pisi Python API'si üzerinden kurulu paket listesini çeker."""
-        try:
-            import pisi.db.installdb as idb
-            import pisi.db.packagedb as pdb
-            install_db = idb.InstallDB()
-            package_db = pdb.PackageDB()
-            installed_names = list(install_db.list_installed())
-            if not installed_names:
-                return False
-            for name in installed_names:
-                try:
-                    pkg_obj = install_db.get_package(name)
-                    summary = getattr(pkg_obj, 'summary', '') or ''
-                    description = getattr(pkg_obj, 'description', '') or ''
-                    version = ''
-                    hist = getattr(pkg_obj, 'history', None)
-                    if hist:
-                        upd = hist[0] if hist else None
-                        if upd:
-                            version = getattr(upd, 'version', '') or ''
-                    part_of = getattr(pkg_obj, 'partOf', '') or ''
-                    icon = getattr(pkg_obj, 'icon', '') or ''
-                    cat = self._map_to_category(name, part_of=part_of, summary=str(summary))
-                    icon_path = self._find_icon(str(icon) if icon else name)
-                    pkg = PackageInfo(
-                        name=name,
-                        display_name=name.capitalize() if name.islower() else name,
-                        summary=str(summary)[:120] if summary else '',
-                        description=str(description) if description else '',
-                        version=str(version) if version else '',
-                        category=cat,
-                        icon_name=str(icon) if icon else name,
-                        icon_path=icon_path,
-                        installed=True,
-                    )
-                    self._installed_packages[name] = pkg
-                except Exception as e:
-                    print(f"Paket bilgisi alınamadı ({name}): {e}")
-            return len(self._installed_packages) > 0
-        except Exception as e:
-            print(f"Pisi InstallDB hatası: {e}")
-            return False
-
-    def _parse_pisi_list_output(self, output: str, installed: bool = False):
-        lines = output.strip().split("\n")
-        current_pkg = None
-
-        for line in lines:
-            if not line.strip():
-                continue
-
-            if line.startswith(" ") or line.startswith("\t"):
-                if current_pkg:
-                    stripped = line.strip()
-                    if stripped.startswith("Summary:"):
-                        current_pkg.summary = stripped.replace("Summary:", "").strip()
-                    elif stripped.startswith("Description:"):
-                        current_pkg.description = stripped.replace("Description:", "").strip()
-            else:
-                parts = line.split(" - ", 1)
-                if parts:
-                    name = parts[0].strip()
-                    if name:
-                        current_pkg = PackageInfo(name=name)
-                        if len(parts) > 1:
-                            current_pkg.version = parts[1].strip()
-                        current_pkg.installed = installed
-                        current_pkg.icon_path = self._find_icon(name)
-                        current_pkg.category = self._map_to_category(name)
-
-                        if installed:
-                            self._installed_packages[name] = current_pkg
-                        else:
-                            self._available_packages[name] = current_pkg
-
-    def _map_to_category(self, name: str, part_of: str = "", summary: str = "") -> str:
-        p = (part_of or "").lower()
-        n = (name or "").lower()
-        s = (summary or "").lower()
-
-        if any(x in p for x in ["devel", "code", "prog", "editor", "ide", "git"]) or any(x in n for x in ["code", "studio", "atom", "antigravity", "ide"]):
-            return "development"
-        if any(x in p for x in ["net", "web", "browser", "mail", "conn", "remote"]) or any(x in n for x in ["chrome", "firefox", "desk", "browser", "telegram"]):
-            return "internet"
-        if any(x in p for x in ["sound", "video", "tv", "media", "audio"]) or any(x in n for x in ["vlc", "player", "music", "video", "obs"]):
-            return "multimedia"
-        if any(x in p for x in ["graph", "image", "draw", "pdf"]) or any(x in n for x in ["gimp", "inkscape", "krita", "image"]):
-            return "graphics"
-        if any(x in p for x in ["game"]) or any(x in n for x in ["game", "steam", "craft", "kart", "tux"]):
-            return "games"
-        if any(x in p for x in ["office", "word", "calc", "writer"]) or any(x in n for x in ["office", "pdf", "calc"]):
-            return "office"
-        if any(x in p for x in ["science", "edu", "elec"]) or any(x in n for x in ["arduino", "math"]):
-            return "education"
-        if any(x in p for x in ["system", "admin", "base", "kernel", "root"]) or any(x in n for x in ["htop", "neofetch", "gparted"]):
-            return "system"
-
-        return "utilities"
-
-    def _find_icon(self, icon_name: str) -> str:
-        if not icon_name:
-            return ""
-
-        for search_path in ICON_SEARCH_PATHS:
-            for ext in ICON_EXTENSIONS:
-                icon_file = Path(search_path) / f"{icon_name}{ext}"
-                if icon_file.exists():
-                    return str(icon_file)
-
-        return ""
-
-    def _get_multilang_text(self, element, tag: str, preferred_lang: str = "tr") -> str:
-        """Çok dilli XML etiketlerinden tercih edilen dildeki metni döndürür.
-        Yoksa İngilizce'yi, o da yoksa ilk bulunanı döndürür."""
-        XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
-        values = {}
-        for child in element:
-            if child.tag == tag:
-                lang = child.attrib.get(XML_LANG, child.attrib.get("lang", "en"))
-                text = (child.text or "").strip()
-                if text:
-                    values[lang] = text
-        return values.get(preferred_lang) or values.get("en") or next(iter(values.values()), "")
-
-    def _load_from_pisi_repo_index(self) -> bool:
-        """PiSi deposu indeks XML dosyalarından paketleri ve kategorileri okur."""
-        import glob
-        import xml.etree.ElementTree as ET
-
-        index_files = (
-            glob.glob("/var/lib/pisi/index/**/*.xml", recursive=True)
-            + glob.glob("/var/cache/pisi/**/*.xml", recursive=True)
-        )
-        # Yalnızca gerçek indeks dosyalarını al (.sha1sum vb. hariç)
-        index_files = [f for f in index_files if f.endswith(".xml")]
-        if not index_files:
-            return False
-
-        loaded_count = 0
-        for idx_file in index_files:
-            try:
-                tree = ET.parse(idx_file)
-                root = tree.getroot()
-                # Paketler root'un doğrudan çocukları olarak da gelebilir
-                packages = [c for c in root if c.tag == "Package"]
-                if not packages:
-                    packages = root.findall(".//Package")
-
-                for p in packages:
-                    name = (p.findtext("Name") or "").strip()
-                    if not name:
-                        continue
-
-                    summary = self._get_multilang_text(p, "Summary")
-                    desc = self._get_multilang_text(p, "Description")
-                    part_of = (p.findtext("PartOf") or "").strip()
-                    icon = (p.findtext("Icon") or "").strip()
-                    license_str = (p.findtext("License") or "").strip()
-                    installed_size_raw = (p.findtext("InstalledSize") or "0").strip()
-                    download_size_raw = (p.findtext("PackageSize") or "0").strip()
-
-                    def _to_mb(raw: str) -> str:
-                        try:
-                            val = int(raw)
-                            if val > 0:
-                                mb = round(val / (1024 * 1024), 1)
-                                return f"{mb} MB"
-                        except (ValueError, TypeError):
-                            pass
-                        return ""
-
-                    inst_size_str = _to_mb(installed_size_raw)
-                    dl_size_str = _to_mb(download_size_raw)
-
-                    version = "1.0.0"
-                    hist = p.find("History")
-                    if hist is not None:
-                        upd = hist.find("Update")
-                        if upd is not None:
-                            version = (upd.findtext("Version") or "1.0.0").strip()
-
-                    # Bağımlılık sayısını hesapla
-                    deps_el = p.find("RuntimeDependencies")
-                    dep_count = len(list(deps_el)) if deps_el is not None else 0
-
-                    cat = self._map_to_category(name, part_of=part_of, summary=summary)
-                    icon_path = self._find_icon(icon or name)
-
-                    pkg = PackageInfo(
-                        name=name,
-                        display_name=name.capitalize() if name.islower() else name,
-                        summary=summary or desc[:80],
-                        description=desc or summary,
-                        version=version,
-                        category=cat,
-                        icon_name=icon or name,
-                        icon_path=icon_path,
-                        installed_size=inst_size_str,
-                        download_size=dl_size_str,
-                        license=license_str,
-                        dependencies_count=dep_count,
-                    )
-                    self._available_packages[name] = pkg
-                    loaded_count += 1
-            except Exception as e:
-                print(f"Index XML okuma hatası {idx_file}: {e}")
-
-        return loaded_count > 0
-
-    def load_available_packages(self, progress_callback=None) -> dict[str, PackageInfo]:
-        has_pisi_pkgs = any(not pkg.is_flatpak for pkg in self._available_packages.values())
-        if has_pisi_pkgs:
-            return self._available_packages
-
-        if self._load_index_from_cache():
-            if progress_callback:
-                progress_callback(100, "Önbellekten yüklendi")
-            return self._available_packages
-
-        if self._pisi_available:
-            if progress_callback:
-                progress_callback(20, "PiSi depolarından paketler yükleniyor...")
-            self._load_from_pisi_available(progress_callback)
-
-        if not self._available_packages:
-            self._load_demo_packages()
-
-        for name in self._available_packages:
-            if name in self._installed_packages:
-                self._available_packages[name].installed = True
-
-        self._save_index_to_cache()
-        return self._available_packages
-
-    def _load_from_pisi_available(self, progress_callback=None):
-        if self._load_from_pisi_repo_index():
-            if progress_callback:
-                progress_callback(90, "PiSi deposu indeksinden paketler yüklendi.")
-            return
-
-        try:
-            result = subprocess.run(
-                ["pisi", "list-available", "--long"],
-                capture_output=True, text=True, timeout=120
-            )
-
-            if result.returncode == 0:
-                self._parse_pisi_list_output(result.stdout, installed=False)
-                for pkg in self._available_packages.values():
-                    if not pkg.icon_path:
-                        pkg.icon_path = self._find_icon(pkg.icon_name or pkg.name)
-            else:
-                self._load_demo_packages()
-
-        except Exception as e:
-            print(f"Paket yükleme hatası: {e}")
-            self._load_demo_packages()
-
-    def _run_pisi_cmd(self, pisi_args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
-        """Pisi komutunu çalıştırır. Eğer uygulama root yetkisiyle çalışıyorsa (euid == 0)
-        pkexec kullanmadan doğrudan çalıştırır, aksi takdirde pkexec kullanır."""
-        if hasattr(os, "geteuid") and os.geteuid() == 0:
-            cmd = ["pisi"] + pisi_args
-        else:
-            cmd = ["pkexec", "pisi"] + pisi_args
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-
-    def update_repo_and_sync_cache(self, progress_callback=None, update_repo=True) -> bool:
-        """Pisi paket yöneticisinin deposunu günceller ve eğer sistemdeki depo
-        indekslerinde herhangi bir değişiklik varsa uygulamanın önbelleğini silerek yeniler."""
-        if progress_callback:
-            if update_repo:
-                progress_callback(5, "PiSi depoları güncelleniyor...")
-            else:
-                progress_callback(5, "Önbellek kontrol ediliyor...")
-
-        # 1. pisi update-repo komutunu çalıştır
-        if update_repo:
-            try:
-                self._run_pisi_cmd(["update-repo"], timeout=25)
-            except Exception as e:
-                print(f"Pisi depo güncelleme hatası: {e}")
-
-        # 2. Sistemdeki repo xml dosyalarının değiştirilme zamanlarını kontrol et
-        import glob
-        index_files = (
-            glob.glob("/var/lib/pisi/index/**/*.xml", recursive=True)
-            + glob.glob("/var/cache/pisi/**/*.xml", recursive=True)
-        )
-        index_files = [f for f in index_files if f.endswith(".xml")]
-
-        cache_needs_refresh = False
-        if not INDEX_CACHE_FILE.exists():
-            cache_needs_refresh = True
-        elif index_files:
-            cache_mtime = INDEX_CACHE_FILE.stat().st_mtime
-            for f in index_files:
-                try:
-                    if os.path.getmtime(f) > cache_mtime:
-                        cache_needs_refresh = True
-                        break
-                except OSError:
-                    pass
-
-        # 3. Eğer sistem deposunda güncelleme varsa önbelleği temizle ki yeniden yüklensin
-        if cache_needs_refresh and INDEX_CACHE_FILE.exists():
-            if progress_callback:
-                progress_callback(15, "Depoda değişiklik tespit edildi, önbellek yenileniyor...")
-            try:
-                INDEX_CACHE_FILE.unlink()
-            except Exception as e:
-                print(f"Önbellek silme hatası: {e}")
-
-        return cache_needs_refresh
-
-    def check_for_updates(self, progress_callback=None, update_repo=True) -> tuple[int, list[str], str]:
-        """Pisi depolarını günceller ve güncellenebilir paketleri tespit eder."""
-        error_msg = ""
-        upgradable_names = []
-
-        if update_repo:
-            if progress_callback:
-                progress_callback(10, "PiSi depoları güncelleniyor...")
-
-            if self._pisi_available:
-                try:
-                    res = self._run_pisi_cmd(["update-repo"], timeout=60)
-                    if res.returncode != 0 and res.stderr:
-                        print(f"pisi update-repo uyarısı: {res.stderr}")
-                except Exception as e:
-                    error_msg = str(e)
-                    print(f"Pisi update-repo hatası: {e}")
-
-        if progress_callback:
-            progress_callback(50, "Güncellemeler kontrol ediliyor...")
-
-        if self._pisi_available:
-            try:
-                import pisi.db.installdb as idb
-                import pisi.db.packagedb as pdb
-                install_db = idb.InstallDB()
-                package_db = pdb.PackageDB()
-                for name in install_db.list_installed():
-                    if package_db.has_package(name):
-                        try:
-                            inst_v, inst_r = install_db.get_version(name)
-                            repo_v, repo_r = package_db.get_version(name)
-                            if int(repo_r) > int(inst_r):
-                                upgradable_names.append(name)
-                                if name in self._installed_packages:
-                                    self._installed_packages[name].has_update = True
-                                    self._installed_packages[name].new_version = repo_v
-                                if name in self._available_packages:
-                                    self._available_packages[name].has_update = True
-                                    self._available_packages[name].new_version = repo_v
-                        except (ValueError, TypeError, Exception):
-                            pass
-            except Exception as e:
-                print(f"Pisi DB update check hatası: {e}")
-
-            try:
-                result = subprocess.run(
-                    ["pisi", "list-upgrades"], capture_output=True, text=True, timeout=30
-                )
-                if result.returncode == 0 and result.stdout:
-                    for line in result.stdout.splitlines():
-                        line = line.strip()
-                        if line and " - " in line and not line.startswith("Yükseltilecek"):
-                            parts = line.split(" - ", 1)
-                            pkg_name = parts[0].strip()
-                            if pkg_name not in upgradable_names:
-                                upgradable_names.append(pkg_name)
-                                if pkg_name in self._installed_packages:
-                                    self._installed_packages[pkg_name].has_update = True
-                                if pkg_name in self._available_packages:
-                                    self._available_packages[pkg_name].has_update = True
-            except Exception as e:
-                print(f"Pisi CLI list-upgrades hatası: {e}")
-        else:
-            # Demo modu simülasyonu
-            installed_pkgs = [p for p in self._installed_packages.values() if p.installed]
-            if installed_pkgs:
-                targets = installed_pkgs[:2]
-                for p in targets:
-                    p.has_update = True
-                    if p.name not in upgradable_names:
-                        upgradable_names.append(p.name)
-
-        # Flatpak güncellemelerini de kontrol et
-        if self._flatpak_available:
-            if progress_callback:
-                progress_callback(90, "Flatpak güncellemeleri kontrol ediliyor...")
-            flatpak_updates = self.check_flatpak_updates()
-            for key in flatpak_updates:
-                if key not in upgradable_names:
-                    upgradable_names.append(key)
-
-        if progress_callback:
-            progress_callback(100, "Güncelleme kontrolü tamamlandı.")
-
-        return len(upgradable_names), upgradable_names, error_msg
-
-    def is_cache_valid(self) -> bool:
-        """Önbellek geçerli mi kontrol eder (TTL süresi dolmamış ve dosya var)."""
-        if not INDEX_CACHE_FILE.exists():
-            return False
-        import time
-        file_age = time.time() - INDEX_CACHE_FILE.stat().st_mtime
-        return file_age <= INDEX_CACHE_TTL
-
-    def _load_index_from_cache(self) -> bool:
-        if not INDEX_CACHE_FILE.exists():
-            return False
-
-        import time
-        file_age = time.time() - INDEX_CACHE_FILE.stat().st_mtime
-        if file_age > INDEX_CACHE_TTL:
-            return False
-
-        try:
-            with open(INDEX_CACHE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            for pkg_data in data:
-                # Önbellekteki PiSi paketlerinin is_flatpak değerini temin et
-                pkg_data["is_flatpak"] = False
-                pkg = PackageInfo(**pkg_data)
-                self._available_packages[pkg.name] = pkg
-
-            return len(self._available_packages) > 0
-        except Exception:
-            return False
-
-    def _save_index_to_cache(self):
-        try:
-            # Sadece PiSi paketlerini önbelleğe kaydet
-            data = [pkg.__dict__ for pkg in self._available_packages.values() if not pkg.is_flatpak]
-            with open(INDEX_CACHE_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"Önbellek kaydetme hatası: {e}")
-
-    def _load_demo_packages(self):
-        """LupuS PiSiM varsayılan paket listesi"""
-        demo = [
-            PackageInfo(
-                name="google-chrome",
-                display_name="Google Chrome",
-                version="120.0.6099.109",
-                summary="Web Tarayıcısı",
-                description="Google Chrome, web ortamını daha hızlı, daha kolay ve daha güvenli hale getirmek için geliştirilmiş modern bir tarayıcıdır.",
-                category="internet",
-                rating=4.8, downloads=89200, download_size="92.4 MB", installed_size="280 MB",
-                has_update=True, new_version="121.0.6167.85",
-                icon_name="google-chrome", icon_path=self._find_icon("google-chrome")
-            ),
-            PackageInfo(
-                name="minetest",
-                display_name="Minetest",
-                version="5.8.0",
-                summary="Minecraft Benzeri Blok Oyunu",
-                description="Minetest, sonsuz dünyalara sahip açık kaynaklı bir blok oyunu ve oyun motorudur. Kendi dünyanızı kurun ve arkadaşlarınızla oynayın.",
-                category="games",
-                rating=4.3, downloads=19308, download_size="10.1 MB", installed_size="32.8 MB",
-                dependencies_count=13, developer="LupuS Oyun Ekibi",
-                icon_name="minetest", icon_path=self._find_icon("minetest")
-            ),
-            PackageInfo(
-                name="wine",
-                display_name="Wine",
-                version="9.0",
-                summary="Windows Uygulamaları Çalıştırıcısı",
-                description="Wine, Windows uygulamalarını LupuS işletim sisteminde doğrudan çalıştırmanızı sağlayan uyumluluk katmanıdır.",
-                category="utilities",
-                rating=4.6, downloads=42100, download_size="48.2 MB", installed_size="190 MB",
-                icon_name="wine", icon_path=self._find_icon("wine")
-            ),
-            PackageInfo(
-                name="gameplay-football",
-                display_name="Gameplay Football",
-                version="0.8.2",
-                summary="Futbol Oyunu",
-                description="Gameplay Football, fizik tabanlı kontroller sunan 3D açık kaynaklı eğlenceli bir futbol simülasyonudur.",
-                category="games",
-                rating=4.1, downloads=11400, download_size="65.0 MB", installed_size="140 MB",
-                icon_name="applications-games", icon_path=self._find_icon("applications-games")
-            ),
-            PackageInfo(
-                name="supertuxkart",
-                display_name="SuperTuxKart",
-                version="1.4",
-                summary="3D Kart Yarış Oyunu",
-                description="SuperTuxKart, farklı pistler ve karakterler içeren eğlenceli açık kaynaklı 3D kart yarış oyunudur.",
-                category="games",
-                rating=4.7, downloads=31200, download_size="620 MB", installed_size="1.2 GB",
-                icon_name="supertuxkart", icon_path=self._find_icon("supertuxkart")
-            ),
-            PackageInfo(
-                name="steam",
-                display_name="Steam",
-                version="1.0.0.78",
-                summary="Dijital Oyun Mağazası",
-                description="Steam, Valve tarafından geliştirilen dünyanın en geniş dijital oyun kütüphanesi ve oyuncu topluluğudur.",
-                category="games",
-                rating=4.9, downloads=128000, download_size="14.2 MB", installed_size="45 MB",
-                icon_name="steam", icon_path=self._find_icon("steam")
-            ),
-            PackageInfo(
-                name="firefox",
-                display_name="Mozilla Firefox",
-                version="121.0",
-                summary="Özgür Web Tarayıcısı",
-                description="Mozilla Firefox, gizlilik odaklı, hızlı ve tamamen özelleştirilebilir açık kaynaklı web tarayıcısıdır.",
-                category="internet",
-                rating=4.8, downloads=105000, download_size="78.5 MB", installed_size="230 MB",
-                icon_name="firefox", icon_path=self._find_icon("firefox")
-            ),
-            PackageInfo(
-                name="brave",
-                display_name="Brave Browser",
-                version="1.61.101",
-                summary="Gizlilik Odaklı Web Tarayıcısı",
-                description="Brave, reklamları ve izleyicileri otomatik engelleyen ultra hızlı bir web tarayıcısıdır.",
-                category="internet",
-                rating=4.7, downloads=54000, download_size="95.0 MB", installed_size="290 MB",
-                icon_name="brave-browser", icon_path=self._find_icon("brave-browser")
-            ),
-            PackageInfo(
-                name="vlc",
-                display_name="VLC Media Player",
-                version="3.0.20",
-                summary="Çok Amaçlı Medya Oynatıcı",
-                description="VLC, tüm medya formatlarını ve akış protokollerini ek kodek gerektirmeden oynatan ücretsiz bir medya istemcisidir.",
-                category="multimedia",
-                rating=4.9, downloads=142000, download_size="38.0 MB", installed_size="110 MB",
-                icon_name="vlc", icon_path=self._find_icon("vlc")
-            ),
-            PackageInfo(
-                name="gimp",
-                display_name="GIMP",
-                version="2.10.36",
-                summary="Görüntü Düzenleme Programı",
-                description="GIMP, fotoğraf rötuşlama, resim bileşimi ve görsel oluşturma için kullanılan açık kaynaklı grafik editörüdür.",
-                category="graphics",
-                rating=4.7, downloads=68000, download_size="145 MB", installed_size="420 MB",
-                icon_name="gimp", icon_path=self._find_icon("gimp")
-            ),
-            PackageInfo(
-                name="libreoffice",
-                display_name="LibreOffice",
-                version="7.6.4",
-                summary="Gelişmiş Ofis Paketi",
-                description="Kelime işlemci, tablo düzenleyici, sunum hazırlayıcı ve veritabanı içeren güçlü açık kaynaklı ofis paketi.",
-                category="office",
-                rating=4.8, downloads=98000, download_size="240 MB", installed_size="680 MB",
-                icon_name="libreoffice-startcenter", icon_path=self._find_icon("libreoffice-startcenter")
-            ),
-            PackageInfo(
-                name="vscode",
-                display_name="Visual Studio Code",
-                version="1.85.2",
-                summary="Kod Editörü",
-                description="Gelişmiş eklenti desteği, Git entegrasyonu ve IntelliSense ile donatılmış modern kod geliştirme ortamı.",
-                category="development",
-                rating=4.9, downloads=115000, download_size="88.0 MB", installed_size="310 MB",
-                icon_name="com.visualstudio.code", icon_path=self._find_icon("com.visualstudio.code")
-            ),
-            PackageInfo(
-                name="thunderbird",
-                display_name="Mozilla Thunderbird",
-                version="115.6.0",
-                summary="E-posta İstemcisi",
-                description="E-posta, takvim ve kişileri tek bir yerde güvenle yönetmenizi sağlayan masaüstü istemcisi.",
-                category="internet",
-                rating=4.5, downloads=34000, download_size="64.0 MB", installed_size="180 MB",
-                icon_name="thunderbird", icon_path=self._find_icon("thunderbird")
-            ),
-            PackageInfo(
-                name="filezilla",
-                display_name="FileZilla",
-                version="3.66.4",
-                summary="FTP/SFTP İstemcisi",
-                description="Dosya transferi için kullanılan güvenilir ve hızlı grafik arayüzlü FTP istemcisi.",
-                category="internet",
-                rating=4.6, downloads=28000, download_size="18.5 MB", installed_size="52 MB",
-                icon_name="filezilla", icon_path=self._find_icon("filezilla")
-            ),
-            PackageInfo(
-                name="obs-studio",
-                display_name="OBS Studio",
-                version="30.0.2",
-                summary="Ekran Kayıt ve Canlı Yayın Programı",
-                description="Yüksek kalitede ekran kaydı yapabileceğiniz ve canlı yayınlar gerçekleştirebileceğiniz profesyonel yazılım.",
-                category="multimedia",
-                rating=4.9, downloads=76000, download_size="110 MB", installed_size="340 MB",
-                icon_name="com.obsproject.Studio", icon_path=self._find_icon("com.obsproject.Studio")
-            ),
-            PackageInfo(
-                name="kdenlive",
-                display_name="Kdenlive",
-                version="23.08.4",
-                summary="Çok Parçalı Video Editörü",
-                description="Video kurgulama, özel efekt ekleme ve ses senkronizasyonu sağlayan profesyonel video editörü.",
-                category="multimedia",
-                rating=4.6, downloads=29000, download_size="125 MB", installed_size="390 MB",
-                icon_name="kdenlive", icon_path=self._find_icon("kdenlive")
-            ),
-            PackageInfo(
-                name="blender",
-                display_name="Blender",
-                version="4.0.2",
-                summary="3D Modelleme ve Animasyon",
-                description="3D modelleme, kaplama, animasyon ve render için kullanılan dünya standartlarında açık kaynak yazılım.",
-                category="graphics",
-                rating=4.9, downloads=64000, download_size="310 MB", installed_size="890 MB",
-                icon_name="blender", icon_path=self._find_icon("blender")
-            ),
-            PackageInfo(
-                name="gparted",
-                display_name="GParted",
-                version="1.5.0",
-                summary="Disk Bölümleme Aracı",
-                description="Sabit disklerinizi biçimlendirme, bölümleme ve boyutlandırma işlemlerini grafik ortamda yönetin.",
-                category="system",
-                rating=4.7, downloads=48000, download_size="12.0 MB", installed_size="36 MB",
-                icon_name="gparted", icon_path=self._find_icon("gparted")
-            ),
-            PackageInfo(
-                name="htop",
-                display_name="htop",
-                version="3.3.0",
-                summary="Terminal Süreç Takip Aracı",
-                description="Sistem işlemcisi, bellek kullanımı ve çalışan süreçleri anlık olarak izleyen terminal aracı.",
-                category="system",
-                rating=4.8, downloads=52000, download_size="1.8 MB", installed_size="5.2 MB",
-                icon_name="htop", icon_path=self._find_icon("htop")
-            ),
-        ]
-
-        for pkg in demo:
-            self._available_packages[pkg.name] = pkg
-
-        for name in ["google-chrome", "firefox", "vlc", "libreoffice", "htop"]:
-            if name in self._available_packages:
-                self._available_packages[name].installed = True
-                self._installed_packages[name] = self._available_packages[name]
 
     def get_categories(self) -> dict[str, list[str]]:
         categories = {}
@@ -1265,15 +1298,12 @@ class PisiBackend:
             icon_name, name = category_meta.get(cat_id, ("applications-other", cat_id.capitalize()))
             result.append((cat_id, icon_name, f"{name} ({count})"))
 
-        # Flatpak kategorisini ekle (eğer flatpak varsa ve paket varsa)
         if self._flatpak_available:
             flatpak_count = sum(1 for p in self._available_packages.values() if p.is_flatpak)
             if flatpak_count > 0:
                 result.append(("flatpak", "package-x-generic", f"Flatpak ({flatpak_count})"))
 
         return result
-
-
 
     def get_all_packages(self) -> dict[str, PackageInfo]:
         merged = dict(self._available_packages)
@@ -1288,35 +1318,34 @@ class PisiBackend:
         return merged
 
     def install_package(self, package_name: str) -> tuple[bool, str]:
+        if package_name.startswith("flatpak:"):
+            return self.install_flatpak(package_name)
+
         if not self._pisi_available:
-            if package_name in self._available_packages:
-                self._available_packages[package_name].installed = True
-                self._available_packages[package_name].has_update = False
-                self._installed_packages[package_name] = self._available_packages[package_name]
-            return True, f"{package_name} başarıyla kuruldu (Demo)"
+            return False, "pisi komutu sistemde bulunamadı"
 
         try:
-            result = self._run_pisi_cmd(["install", "--yes-all", package_name], timeout=300)
+            result = self._run_pisi_cmd(["install", "-y", package_name], timeout=300)
             if result.returncode == 0:
                 if package_name in self._available_packages:
                     self._available_packages[package_name].installed = True
                     self._installed_packages[package_name] = self._available_packages[package_name]
                 return True, f"{package_name} başarıyla kuruldu"
             else:
-                return False, result.stderr or "Kurulum başarısız oldu"
+                err_msg = result.stderr or result.stdout or "Kurulum başarısız oldu"
+                return False, err_msg
         except Exception as e:
             return False, str(e)
 
     def remove_package(self, package_name: str) -> tuple[bool, str]:
+        if package_name.startswith("flatpak:"):
+            return self.remove_flatpak(package_name)
+
         if not self._pisi_available:
-            if package_name in self._installed_packages:
-                del self._installed_packages[package_name]
-            if package_name in self._available_packages:
-                self._available_packages[package_name].installed = False
-            return True, f"{package_name} başarıyla kaldırıldı (Demo)"
+            return False, "pisi komutu sistemde bulunamadı"
 
         try:
-            result = self._run_pisi_cmd(["remove", "--yes-all", package_name], timeout=300)
+            result = self._run_pisi_cmd(["remove", "-y", package_name], timeout=300)
             if result.returncode == 0:
                 if package_name in self._installed_packages:
                     del self._installed_packages[package_name]
@@ -1324,7 +1353,8 @@ class PisiBackend:
                     self._available_packages[package_name].installed = False
                 return True, f"{package_name} başarıyla kaldırıldı"
             else:
-                return False, result.stderr or "Kaldırma başarısız oldu"
+                err_msg = result.stderr or result.stdout or "Kaldırma başarısız oldu"
+                return False, err_msg
         except Exception as e:
             return False, str(e)
 
@@ -1347,8 +1377,9 @@ class PisiBackend:
         return [pkg for _, pkg in results]
 
     def get_package_info(self, package_name: str) -> Optional[PackageInfo]:
-        if package_name in self._installed_packages:
-            return self._installed_packages[package_name]
-        if package_name in self._available_packages:
-            return self._available_packages[package_name]
-        return None
+        pkg = self._installed_packages.get(package_name) or self._available_packages.get(package_name)
+        if pkg and not pkg.is_flatpak and self._pisi_available and (
+            not pkg.description or not pkg.license or not pkg.packager_name
+        ):
+            self._enrich_pisi_package_info(pkg)
+        return pkg

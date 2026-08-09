@@ -30,6 +30,8 @@ TRANSLATIONS = {
         "search_placeholder": "🔍  Search applications...",
         "search_results_title": "Search Results...",
         "results_for": "Results for \"{query}\"",
+
+        "unknown_developer": "Unknown Developer",
         
         # Sections
         "trending_apps": "Trending Applications",
@@ -69,9 +71,14 @@ TRANSLATIONS = {
         "developer": "Developer",
         "flatpak_pkg": "Flatpak Package",
         "pisi_pkg": "PiSi Package",
-        "lupus_main_repo": "LupuS Main Repository",
-        "lupus_community": "LupuS Community",
-        "flathub_community": "FlatHub Community",
+        "lupus_main_repo": "Main Repository",
+        "lupus_community": "TeknoAnka",
+        "flathub_community": "FlatHub",
+        "packager_name": "Packager",
+        "packager_email": "Packager Email",
+        "update_date": "Last Update Date",
+        "homepage": "Website",
+        "vcs_url": "Source Code",
         "no_description": "PiSi package description not available.",
         "loading_flathub": "Description loading from FlatHub...",
 
@@ -220,6 +227,8 @@ TRANSLATIONS = {
         "search_results_title": "Arama Sonuçları...",
         "results_for": "\"{query}\" için sonuçlar",
 
+        "unknown_developer": "Bilinmeyen Geliştirici",
+
         # Sections
         "trending_apps": "Trend Uygulamalar",
         "editors_choice": "Editörün Seçimleri",
@@ -256,11 +265,16 @@ TRANSLATIONS = {
         "license": "Lisans",
         "repo_origin": "Depo / Kaynak",
         "developer": "Geliştirici",
-        "flatpak_pkg": "Flatpak Paket",
-        "pisi_pkg": "PiSi Paket",
-        "lupus_main_repo": "LupuS Ana Depo",
-        "lupus_community": "LupuS Topluluğu",
-        "flathub_community": "FlatHub Topluluğu",
+        "flatpak_pkg": "Flatpak Paketi",
+        "pisi_pkg": "PiSi Paketi",
+        "lupus_main_repo": "Ana Depo",
+        "lupus_community": "TeknoAnka",
+        "flathub_community": "FlatHub",
+        "packager_name": "Paketleyici",
+        "packager_email": "Paketleyici E-Posta",
+        "update_date": "Son Güncelleme",
+        "homepage": "Web Sitesi",
+        "vcs_url": "Kaynak Kod Deposu",
         "no_description": "PiSi paket açıklaması mevcut değil.",
         "loading_flathub": "Açıklama FlatHub'dan yükleniyor...",
 

@@ -910,7 +910,7 @@ class PisiStatsBox(QFrame):
         stats = [
             (tr("rating"), f"{package.rating:.1f} ★"),
             (tr("downloads"), f"{package.downloads:,}"),
-            (tr("size"), package.installed_size or "32.8 MB"),
+            (tr("size"), package.installed_size or package.download_size or "-"),
             (tr("dependencies"), str(package.dependencies_count)),
         ]
 

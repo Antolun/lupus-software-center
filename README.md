@@ -31,8 +31,12 @@ pisim/
 │   ├── settings.py         # Application settings functions
 │   ├── widgets.py          # UI components (PisiAppCard, TrendingAppCard, PisiInstallWidget, ImageViewerDialog)
 │   └── assets/             # Branding icons and image resources
+├── actions.py              # PiSi package build actions
+├── build-pisi.sh           # PiSi package build script
+├── Makefile                # Build and run commands
+├── pspec.xml               # PiSi package specification
+├── com.teknoanka.pisim.desktop           # Desktop menu entry
 ├── LICENSE                 # License
-├── install.sh              # Installer 
 └── README.md               # Project documentation
 ```
 
@@ -56,24 +60,25 @@ pip3 install PyQt6
 
 ---
 
-## 🚀 Install/Uninstall Application
+## 🚀 Run & Package Application
 
-### Install
+### Run Directly
 ```bash
-# Install
 python3 main.py
+# or
+make run
 ```
 
-### Uninstall
+### Build PiSi Package (.pisi)
 ```bash
-# Uninstall
-sudo ./install.sh uninstall
+sudo ./build-pisi.sh
+# or
+sudo make package
 ```
 
-### Reinstall
+### Install Built PiSi Package
 ```bash
-# Reinstall
-sudo ./install.sh reinstall
+sudo pisi install pisim-XXX.pisi
 ```
 
 ---

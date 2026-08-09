@@ -11,7 +11,7 @@ from pathlib import Path
 CONFIG_DIR = Path.home() / ".config" / "pisim"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 AUTOSTART_DIR = Path.home() / ".config" / "autostart"
-AUTOSTART_FILE = AUTOSTART_DIR / "pisim.desktop"
+AUTOSTART_FILE = AUTOSTART_DIR / "com.teknoanka.pisim.desktop"
 
 DEFAULT_SETTINGS = {
     "autostart": False,

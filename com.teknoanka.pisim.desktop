@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PiSiM
+GenericName=PiSiM Software Center
+GenericName[tr]=PiSiM Yazılım Merkezi
+Comment=Install and manage PiSi and Flatpak packages
+Comment[tr]=PiSi ve Flatpak paketlerini kur ve yönet
+Exec=pisim %u
+Icon=pisim
+Terminal=false
+Categories=Qt;LupuS;System;PM;
+Keywords=pisi;market;store;software;installer;flatpak;
+StartupNotify=true
+StartupWMClass=pisim
