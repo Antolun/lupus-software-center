@@ -49,7 +49,7 @@ pisim/
 - Python 3.10+
 - PyQt6
 - `flatpak` *(optional, for Flatpak/FlatHub support)*
-- `pisi` *(optional, for native PiSi package management; fallback demo mode enabled if unavailable)*
+- `pisi`
 
 ### Install Dependencies
 
@@ -78,7 +78,7 @@ sudo make package
 
 ### Install Built PiSi Package
 ```bash
-sudo pisi install pisim-XXX.pisi
+sudo pisi install pisim-*.pisi
 ```
 
 ---

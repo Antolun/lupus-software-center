@@ -10,9 +10,12 @@ import json
 import hashlib
 import urllib.request
 import urllib.error
+import re
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
+import hashlib
 
 from .i18n import tr
 
@@ -164,72 +167,8 @@ class PisiBackend:
             print(f"PiSi list-installed hatası: {e}")
 
     def fetch_pisi_screenshots(self, pkg_name: str, display_name: str = "") -> list[str]:
-        """PiSi paketlerinin temsilî ekran görüntülerini internetten/AppStream'den çeker ve yerel önbelleğe alır."""
-        target_query = display_name or pkg_name
-        api_url = "https://flathub.org/api/v2/search"
-        payload = json.dumps({"query": target_query}).encode("utf-8")
-        req = urllib.request.Request(api_url, data=payload, headers={
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)',
-            'Content-Type': 'application/json'
-        })
-        
-        sc_urls = []
-        try:
-            with urllib.request.urlopen(req, timeout=5) as r:
-                data = json.loads(r.read().decode('utf-8'))
-                hits = data.get("hits", [])
-                best_id = ""
-                for h in hits:
-                    aid = h.get("app_id", "")
-                    aname = h.get("name", "")
-                    if pkg_name.lower() in aid.lower() or pkg_name.lower() in aname.lower():
-                        best_id = aid
-                        break
-                if not best_id and hits:
-                    best_id = hits[0].get("app_id")
-                    
-                if best_id:
-                    app_url = f"https://flathub.org/api/v2/appstream/{best_id}"
-                    app_req = urllib.request.Request(app_url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(app_req, timeout=5) as app_r:
-                        app_data = json.loads(app_r.read().decode('utf-8'))
-                        scs_data = app_data.get("screenshots", [])
-                        for sc in scs_data:
-                            if isinstance(sc, dict):
-                                if sc.get("desktop"):
-                                    sc_urls.append(sc.get("desktop"))
-                                elif sc.get("sizes") and isinstance(sc.get("sizes"), list):
-                                    sizes = sc.get("sizes")
-                                    max_url = max(sizes, key=lambda s: int(s.get("width", 0)) if isinstance(s, dict) and str(s.get("width","0")).isdigit() else 0).get("src") if isinstance(sizes[0], dict) else sizes[-1]
-                                    if isinstance(max_url, str):
-                                        sc_urls.append(max_url)
-                                    elif isinstance(sizes[-1], dict) and sizes[-1].get("src"):
-                                        sc_urls.append(sizes[-1].get("src"))
-                                elif sc.get("src"):
-                                    sc_urls.append(sc.get("src"))
-                            elif isinstance(sc, str):
-                                sc_urls.append(sc)
-        except Exception as e:
-            print(f"PiSi ekran görüntüsü arama hatası ({pkg_name}): {e}")
-            
-        local_paths = []
-        for sc_url in sc_urls[:4]:
-            if not sc_url:
-                continue
-            try:
-                sc_hash = hashlib.md5(sc_url.encode('utf-8')).hexdigest()
-                ext = os.path.splitext(sc_url.split('?')[0])[1] or ".png"
-                cached_p = ICON_CACHE_DIR / f"sc_pisi_{sc_hash}{ext}"
-                if not cached_p.exists():
-                    ic_req = urllib.request.Request(sc_url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(ic_req, timeout=5) as ic_resp:
-                        with open(cached_p, 'wb') as f:
-                            f.write(ic_resp.read())
-                local_paths.append(str(cached_p))
-            except Exception as e:
-                print(f"Ekran görüntüsü indirme hatası: {e}")
-                
-        return local_paths
+        """PiSi paketleri için ekran görüntüsü gösterimini devre dışı bırakır."""
+        return []
 
     def _get_pisi_pspec_map(self) -> dict[str, str]:
         """PisiLinux GitHub depolarındaki pspec.xml dosya yollarının haritasını yükler/önbellekler."""
