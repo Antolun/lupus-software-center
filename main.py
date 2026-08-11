@@ -44,7 +44,7 @@ ASSETS_DIR = os.path.join(os.path.dirname(__file__), "pisi_store", "assets")
 SOCKET_NAME = f"pisim_single_instance_{os.getuid() if hasattr(os, 'getuid') else 'default'}"
 
 
-VERSION = "1.2"
+VERSION = "1.2.1"
 
 CLI_COMMANDS = {
     "search": ["-s", "--search"],

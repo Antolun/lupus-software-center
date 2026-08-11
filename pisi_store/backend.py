@@ -1,5 +1,6 @@
 """
 Pisi Store Backend - LupuS İşletim Sistemi ve PiSi Paket Yöneticisi Veri Sağlayıcısı
+(Native PiSi Python API Entegrasyonlu)
 """
 
 import subprocess
@@ -15,11 +16,22 @@ import urllib.parse
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
-import hashlib
 
 from .i18n import tr
 
-CACHE_DIR = Path.home() / ".cache" / "pisi-store"
+# Native PiSi API İçe Aktarımı
+HAS_PISI_API = False
+try:
+    import pisi.db.installdb
+    import pisi.db.packagedb
+    import pisi.api
+    import pisi.specfile
+    HAS_PISI_API = True
+except ImportError:
+    HAS_PISI_API = False
+
+
+CACHE_DIR = Path.home() / ".cache" / "pisim"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 ICON_CACHE_DIR = CACHE_DIR / "icons"
@@ -123,9 +135,15 @@ class PisiBackend:
         self._pisi_available = self._check_pisi()
         self._flatpak_available = self._check_flatpak()
         self._flatpak_loaded = False
+        
+        if HAS_PISI_API:
+            self.idb = pisi.db.installdb.InstallDB()
+            self.pdb = pisi.db.packagedb.PackageDB()
 
     def _check_pisi(self) -> bool:
         """Pisi paket yöneticisinin kullanılabilir olup olmadığını kontrol eder."""
+        if HAS_PISI_API:
+            return True
         try:
             result = subprocess.run(
                 ["pisi", "--version"],
@@ -153,9 +171,37 @@ class PisiBackend:
         return self._flatpak_available
 
     def _load_installed_packages(self):
-        """Kurulu paketleri pisi CLI üzerinden okur."""
+        """Kurulu paketleri PiSi Python API / CLI üzerinden okur."""
         if not self._pisi_available:
             return
+            
+        if HAS_PISI_API:
+            try:
+                installed_list = self.idb.list_installed()
+                for pkg_name in installed_list:
+                    pkg_info, files = self.idb.get_package_files(pkg_name) if hasattr(self.idb, 'get_package_files') else (self.idb.get_package(pkg_name), None)
+                    version = getattr(pkg_info, 'version', '')
+                    summary = str(getattr(pkg_info, 'summary', ''))
+                    
+                    icon_path = self._find_icon(pkg_name)
+                    category = self._map_to_category(pkg_name, summary=summary)
+                    
+                    pkg = PackageInfo(
+                        name=pkg_name,
+                        display_name=pkg_name.capitalize() if pkg_name.islower() else pkg_name,
+                        version=version,
+                        summary=summary,
+                        category=category,
+                        icon_name=pkg_name,
+                        icon_path=icon_path,
+                        installed=True
+                    )
+                    self._installed_packages[pkg_name] = pkg
+                return
+            except Exception as e:
+                print(f"PiSi API kurulu paket okuma hatası: {e}")
+
+        # Fallback CLI
         try:
             result = subprocess.run(
                 ["pisi", "list-installed"],
@@ -252,59 +298,64 @@ class PisiBackend:
         return {}
 
     def _enrich_pisi_package_info(self, pkg: PackageInfo):
-        """pisi info + pisi depo pspec.xml üzerinden paketin ayrıntılarını ve gerçek paketçi verilerini yükler."""
+        """pisi API/info + pisi depo pspec.xml üzerinden paketin ayrıntılarını yükler."""
         if not self._pisi_available or pkg.is_flatpak:
             return
-        try:
-            # --- pisi info ---
-            res = subprocess.run(["pisi", "info", pkg.name], capture_output=True, text=True, timeout=10)
-            if res.returncode == 0 and res.stdout:
-                for line in res.stdout.splitlines():
-                    line_str = line.strip()
-                    if not line_str or line_str.startswith("Yüklü paket") or "deposunda bulundu" in line_str or line_str.endswith("bulunamadı."):
-                        continue
-                    if ":" in line_str:
-                        parts = line_str.split(":", 1)
-                        key_raw = parts[0].strip()
-                        val_raw = parts[1].strip()
-                        if "İsim" in key_raw or "Name" in key_raw:
-                            if "," in val_raw:
-                                for sub in val_raw.split(","):
-                                    if ":" in sub:
-                                        sk, sv = sub.split(":", 1)
-                                        sk, sv = sk.strip(), sv.strip()
-                                        if ("sürüm" in sk or "version" in sk) and sv:
-                                            pkg.version = sv
-                                        elif ("yayım" in sk or "release" in sk) and sv:
-                                            pkg.release = sv
-                        elif "Özet" in key_raw or "Summary" in key_raw:
-                            if val_raw and val_raw != "Açıklama yok":
+
+        # Native API Kullanımı
+        if HAS_PISI_API:
+            try:
+                p_obj = None
+                if self.idb.has_package(pkg.name):
+                    p_obj = self.idb.get_package(pkg.name)
+                elif self.pdb.has_package(pkg.name):
+                    p_obj = self.pdb.get_package(pkg.name)
+                
+                if p_obj:
+                    pkg.version = getattr(p_obj, 'version', pkg.version)
+                    pkg.release = str(getattr(p_obj, 'release', pkg.release))
+                    pkg.summary = str(getattr(p_obj, 'summary', pkg.summary))
+                    pkg.description = str(getattr(p_obj, 'description', pkg.description))
+                    pkg.component = str(getattr(p_obj, 'partOf', pkg.component))
+                    
+                    licenses = getattr(p_obj, 'licenses', [])
+                    pkg.license = ", ".join(licenses) if isinstance(licenses, list) else str(licenses)
+                    
+                    deps = getattr(p_obj, 'runtimeDependencies', [])
+                    pkg.dependencies_count = len(deps)
+                    
+                    inst_size = getattr(p_obj, 'installedSize', 0)
+                    pkg_size = getattr(p_obj, 'packageSize', 0)
+                    if inst_size > 0:
+                        pkg.installed_size = f"{round(inst_size / (1024 * 1024), 1)} MB"
+                    if pkg_size > 0:
+                        pkg.download_size = f"{round(pkg_size / (1024 * 1024), 1)} MB"
+            except Exception as e:
+                print(f"API paket detay okuma hatası ({pkg.name}): {e}")
+
+        # CLI Fallback (API yoksa veya eksik alan kaldıysa)
+        if not pkg.description or not pkg.license:
+            try:
+                res = subprocess.run(["pisi", "info", pkg.name], capture_output=True, text=True, timeout=10)
+                if res.returncode == 0 and res.stdout:
+                    for line in res.stdout.splitlines():
+                        line_str = line.strip()
+                        if not line_str or line_str.startswith("Yüklü paket") or "deposunda bulundu" in line_str or line_str.endswith("bulunamadı."):
+                            continue
+                        if ":" in line_str:
+                            parts = line_str.split(":", 1)
+                            key_raw, val_raw = parts[0].strip(), parts[1].strip()
+                            if ("Özet" in key_raw or "Summary" in key_raw) and val_raw != "Açıklama yok":
                                 pkg.summary = val_raw
-                        elif "Açıklama" in key_raw or "Description" in key_raw:
-                            if val_raw:
+                            elif "Açıklama" in key_raw or "Description" in key_raw:
                                 pkg.description = val_raw
-                        elif "Lisanslar" in key_raw or "Licenses" in key_raw:
-                            if val_raw:
+                            elif "Lisanslar" in key_raw or "Licenses" in key_raw:
                                 pkg.license = val_raw
-                        elif "Bileşen" in key_raw or "Component" in key_raw:
-                            if val_raw:
+                            elif "Bileşen" in key_raw or "Component" in key_raw:
                                 pkg.component = val_raw
                                 pkg.category = self._map_to_category(pkg.name, part_of=val_raw, summary=pkg.summary)
-                        elif "Bağımlılıkları" in key_raw or "Dependencies" in key_raw:
-                            deps = [d for d in val_raw.split() if d]
-                            pkg.dependencies_count = len(deps)
-                        elif "Mimari" in key_raw or "Architecture" in key_raw:
-                            for sub in val_raw.split(","):
-                                if "Yerleşik Boyut" in sub or "Installed Size" in sub:
-                                    pkg.installed_size = sub.split(":", 1)[1].strip() if ":" in sub else ""
-                                elif "Paket Boyutu" in sub or "Package Size" in sub:
-                                    pkg.download_size = sub.split(":", 1)[1].strip() if ":" in sub else ""
-                        elif "Dağıtım" in key_raw or "Distribution" in key_raw:
-                            dist_val = val_raw.split(",")[0].strip()
-                            if dist_val:
-                                pkg.origin = dist_val
-        except Exception as e:
-            print(f"Paket detay yükleme hatası ({pkg.name}): {e}")
+            except Exception as e:
+                print(f"Paket detay yükleme hatası ({pkg.name}): {e}")
 
         # --- Repodan Gerçek Paketleyici, E-Posta, Güncelleme Tarihi ve Anasayfa Verilerini Çek ---
         repo_info = self._fetch_pisi_repo_details(pkg.name)
@@ -318,32 +369,7 @@ class PisiBackend:
             if repo_info.get("homepage"):
                 pkg.homepage = repo_info["homepage"]
 
-        # Fallback: Repodan e-posta/isim alınamadıysa pisi blame kullan
-        if not pkg.packager_name or not pkg.packager_email:
-            try:
-                blame = subprocess.run(["pisi", "blame", pkg.name], capture_output=True, text=True, timeout=10)
-                if blame.returncode == 0 and blame.stdout:
-                    for line in blame.stdout.splitlines():
-                        line_str = line.strip()
-                        if ("Yayım Güncelleyen" in line_str or "Updated By" in line_str) and ":" in line_str:
-                            val = line_str.split(":", 1)[1].strip()
-                            if "<" in val and ">" in val:
-                                name_part = val[:val.index("<")].strip()
-                                email_part = val[val.index("<")+1:val.index(">")].strip()
-                                if name_part and not pkg.packager_name:
-                                    pkg.packager_name = name_part
-                                if email_part and not pkg.packager_email:
-                                    pkg.packager_email = email_part
-                            elif val and not pkg.packager_name:
-                                pkg.packager_name = val
-                        elif ("Güncelleme Tarihi" in line_str or "Update Date" in line_str) and ":" in line_str:
-                            date_val = line_str.split(":", 1)[1].strip()
-                            if date_val and not pkg.update_date:
-                                pkg.update_date = date_val
-            except Exception as e:
-                print(f"Paket blame yükleme hatası ({pkg.name}): {e}")
-
-        # --- Geliştirici (Developer) Otomatik Çıkarımı ---
+        # Geliştirici (Developer) Otomatik Çıkarımı
         if not pkg.developer:
             url = (pkg.homepage or "").lower()
             comp = (pkg.component or "").lower()
@@ -493,7 +519,50 @@ class PisiBackend:
         return values.get(preferred_lang) or values.get("en") or next(iter(values.values()), "")
 
     def _load_from_pisi_repo_index(self) -> bool:
-        """PiSi deposu indeks XML dosyalarından paketleri ve kategorileri okur."""
+        """PiSi deposu indeks XML dosyalarından veya PiSi Python API'sinden paketleri okur."""
+        if HAS_PISI_API:
+            try:
+                packages_list = self.pdb.list_packages()
+                for pkg_name in packages_list:
+                    p = self.pdb.get_package(pkg_name)
+                    summary = str(getattr(p, 'summary', ''))
+                    desc = str(getattr(p, 'description', ''))
+                    part_of = str(getattr(p, 'partOf', ''))
+                    license_str = ", ".join(getattr(p, 'licenses', []))
+                    
+                    inst_size = getattr(p, 'installedSize', 0)
+                    dl_size = getattr(p, 'packageSize', 0)
+                    
+                    inst_size_str = f"{round(inst_size / (1024 * 1024), 1)} MB" if inst_size > 0 else ""
+                    dl_size_str = f"{round(dl_size / (1024 * 1024), 1)} MB" if dl_size > 0 else ""
+                    
+                    version = str(getattr(p, 'version', '1.0.0'))
+                    deps = getattr(p, 'runtimeDependencies', [])
+                    dep_count = len(deps)
+
+                    cat = self._map_to_category(pkg_name, part_of=part_of, summary=summary)
+                    icon_path = self._find_icon(pkg_name)
+
+                    pkg = PackageInfo(
+                        name=pkg_name,
+                        display_name=pkg_name.capitalize() if pkg_name.islower() else pkg_name,
+                        summary=summary or desc[:80],
+                        description=desc or summary,
+                        version=version,
+                        category=cat,
+                        icon_name=pkg_name,
+                        icon_path=icon_path,
+                        installed_size=inst_size_str,
+                        download_size=dl_size_str,
+                        license=license_str,
+                        dependencies_count=dep_count,
+                    )
+                    self._available_packages[pkg_name] = pkg
+                return len(self._available_packages) > 0
+            except Exception as e:
+                print(f"PiSi API PackageDB okuma hatası: {e}")
+
+        # XML İndeks okuma fallback
         index_files = (
             glob.glob("/var/lib/pisi/index/**/*.xml", recursive=True)
             + glob.glob("/var/cache/pisi/**/*.xml", recursive=True)
@@ -686,27 +755,43 @@ class PisiBackend:
             progress_callback(50, "Güncellemeler kontrol ediliyor...")
 
         if self._pisi_available:
-            try:
-                result = subprocess.run(
-                    ["pisi", "list-upgrades"], capture_output=True, text=True, timeout=30
-                )
-                if result.returncode == 0 and result.stdout:
-                    for line in result.stdout.splitlines():
-                        line_str = line.strip()
-                        if not line_str or line_str.startswith("Sistem") or line_str.startswith("System") or line_str.startswith("Tüm"):
-                            continue
-                        if line_str.startswith("🌐"):
-                            line_str = line_str[1:].strip()
-                        parts = line_str.split(" - ", 1) if " - " in line_str else line_str.split()
-                        pkg_name = parts[0].strip()
-                        if pkg_name and pkg_name not in upgradable_names:
+            # Native API ile Güncelleme Kontrolü
+            if HAS_PISI_API:
+                try:
+                    upgrades = self.idb.list_upgrades() if hasattr(self.idb, 'list_upgrades') else []
+                    for pkg_name in upgrades:
+                        if pkg_name not in upgradable_names:
                             upgradable_names.append(pkg_name)
                             if pkg_name in self._installed_packages:
                                 self._installed_packages[pkg_name].has_update = True
                             if pkg_name in self._available_packages:
                                 self._available_packages[pkg_name].has_update = True
-            except Exception as e:
-                print(f"Pisi CLI list-upgrades hatası: {e}")
+                except Exception as e:
+                    print(f"PiSi API list_upgrades hatası: {e}")
+
+            # CLI Fallback
+            if not upgradable_names:
+                try:
+                    result = subprocess.run(
+                        ["pisi", "list-upgrades"], capture_output=True, text=True, timeout=30
+                    )
+                    if result.returncode == 0 and result.stdout:
+                        for line in result.stdout.splitlines():
+                            line_str = line.strip()
+                            if not line_str or line_str.startswith("Sistem") or line_str.startswith("System") or line_str.startswith("Tüm"):
+                                continue
+                            if line_str.startswith("🌐"):
+                                line_str = line_str[1:].strip()
+                            parts = line_str.split(" - ", 1) if " - " in line_str else line_str.split()
+                            pkg_name = parts[0].strip()
+                            if pkg_name and pkg_name not in upgradable_names:
+                                upgradable_names.append(pkg_name)
+                                if pkg_name in self._installed_packages:
+                                    self._installed_packages[pkg_name].has_update = True
+                                if pkg_name in self._available_packages:
+                                    self._available_packages[pkg_name].has_update = True
+                except Exception as e:
+                    print(f"Pisi CLI list-upgrades hatası: {e}")
 
         if self._flatpak_available:
             if progress_callback:
@@ -744,12 +829,10 @@ class PisiBackend:
 
             loaded = 0
             for pkg_data in data:
-                # Sadece gerçek pisi deposundan gelen paketleri yükle
                 if pkg_data.get("_source") != "pisi_repo":
                     continue
                 pkg_data.pop("_source", None)
                 pkg_data["is_flatpak"] = False
-                # PackageInfo'da olmayan field varsa temizle
                 valid_fields = {f.name for f in PackageInfo.__dataclass_fields__.values()}
                 pkg_data = {k: v for k, v in pkg_data.items() if k in valid_fields}
                 pkg = PackageInfo(**pkg_data)
@@ -767,7 +850,7 @@ class PisiBackend:
                 if pkg.is_flatpak:
                     continue
                 d = dict(pkg.__dict__)
-                d["_source"] = "pisi_repo"  # gerçek repo markeri
+                d["_source"] = "pisi_repo"
                 data.append(d)
             with open(INDEX_CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1010,7 +1093,7 @@ class PisiBackend:
             print(f"Flatpak depo listesi hatası: {e}")
 
     def fetch_flathub_info(self, app_id: str) -> dict:
-        """FlatHub API (v2) ve flatpak CLI üzerinden uygulamanın ikon, açıklama, boyutlar ve görsellerini indirir."""
+        """FlatHub API (v2) ve flatpak CLI üzerinden uygulamanın detaylarını çeker."""
         real_id = app_id.removeprefix("flatpak:")
         dl_size, inst_size = self._fetch_flatpak_sizes(real_id)
 
@@ -1075,16 +1158,12 @@ class PisiBackend:
                                     f.write(ic_resp.read())
                         local_icon = str(cached_path)
 
-                    # Ek meta alanlar
                     project_license = data.get("project_license", "")
                     urls_data = data.get("urls") or {}
                     homepage = urls_data.get("homepage", "")
                     vcs_browser = urls_data.get("vcs_browser", "")
                     categories = data.get("categories") or []
-                    if isinstance(categories, list):
-                        categories_str = ", ".join(categories[:4])
-                    else:
-                        categories_str = str(categories)
+                    categories_str = ", ".join(categories[:4]) if isinstance(categories, list) else str(categories)
 
                     return {
                         "icon_url": icon_url,
