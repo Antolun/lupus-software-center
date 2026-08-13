@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PiSiM - PiSi Market</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Loading Overlay -->
+  <div id="loading-overlay">
+    <img src="assets/pisim.png" class="loading-logo" alt="PiSiM Logo">
+    <div class="loading-app-name">PiSiM</div>
+    <div class="loading-spinner"></div>
+    <div class="loading-bar-wrap">
+      <div id="loading-bar-fill" class="loading-bar-fill"></div>
+    </div>
+    <div id="loading-msg" class="loading-message" data-i18n="loading_init">Başlatılıyor…</div>
+  </div>
+
+  <!-- Image Viewer Modal -->
+  <div id="image-modal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-toolbar">
+        <button id="btn-zoom-in" class="modal-btn">
+          <img src="assets/icons/zoom-in.svg" alt="Büyüt">
+          <span data-i18n="zoom_in">Büyüt</span>
+        </button>
+        <button id="btn-zoom-out" class="modal-btn">
+          <img src="assets/icons/zoom-out.svg" alt="Küçült">
+          <span data-i18n="zoom_out">Küçült</span>
+        </button>
+        <button id="btn-zoom-reset" class="modal-btn">
+          <img src="assets/icons/zoom-original.svg" alt="Sıfırla">
+          <span data-i18n="reset">Sıfırla</span>
+        </button>
+        <div style="flex:1;"></div>
+        <button id="btn-modal-close" class="modal-btn">
+          <img src="assets/icons/window-close.svg" alt="Kapat">
+          <span data-i18n="close">Kapat</span>
+        </button>
+      </div>
+      <div class="modal-img-container">
+        <img id="modal-target-img" class="modal-img" src="" alt="Ekran Görüntüsü">
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App Shell -->
+  <div id="app-container">
+    <!-- Sol Menü (Sidebar) -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <img src="assets/pisim.png" alt="PiSiM">
+        <h1>PiSiM</h1>
+      </div>
+
+      <div class="sidebar-scroll" id="sidebar-nav">
+        <!-- Dinamik Kategoriler JS ile yüklenecek -->
+        <button class="sidebar-btn active" data-cat="all">
+          <img src="assets/icons/plasma-search.svg" class="sidebar-icon-img" alt="Keşfet">
+          <span class="btn-text" data-i18n="nav_discover">Keşfet</span>
+        </button>
+      </div>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="sidebar-bottom">
+        <button class="sidebar-btn" data-cat="updates">
+          <img src="assets/icons/view-refresh.svg" class="sidebar-icon-img" alt="Güncellemeler">
+          <span class="btn-text" data-i18n="nav_updates">Güncellemeler</span>
+          <span id="sidebar-updates-badge" class="sidebar-badge" style="display:none;"></span>
+        </button>
+        <button class="sidebar-btn" data-cat="settings">
+          <img src="assets/icons/settings-configure.svg" class="sidebar-icon-img" alt="Ayarlar">
+          <span class="btn-text" data-i18n="nav_settings">Ayarlar</span>
+        </button>
+        <button class="sidebar-btn" data-cat="about">
+          <img src="assets/icons/help-about.svg" class="sidebar-icon-img" alt="Hakkında">
+          <span class="btn-text" data-i18n="nav_about">Hakkında</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Sağ Ana Alan -->
+    <main id="main-area">
+      <!-- Topbar -->
+      <header id="topbar">
+        <!-- <button id="btn-nav-back" class="nav-back-btn" title="Geri">
+          <img src="assets/icons/go-previous.svg" alt="Geri">
+        </button> -->
+        <div class="search-box-wrap">
+          <img src="assets/icons/edit-find.svg" class="search-icon-img" alt="Ara">
+          <input type="text" id="search-input" class="search-input" placeholder="Uygulama ara..." data-i18n-placeholder="search_placeholder">
+        </div>
+        <div class="topbar-right">
+          <!-- <button id="btn-topbar-settings" class="header-settings-btn" title="Ayarlar">
+            <img src="assets/icons/settings-configure.svg" alt="Ayarlar">
+          </button> -->
+        </div>
+      </header>
+
+      <!-- Page Stack -->
+      <div id="view-container">
+        
+        <!-- 1. Discover View -->
+        <section id="view-discover" class="view-page active">
+          <!-- All Applications -->
+          <div class="section-header">
+            <h2 class="section-title" data-i18n="all_applications">Tüm Uygulamalar</h2>
+          </div>
+          <div id="discover-all-grid" class="cards-grid"></div>
+        </section>
+
+        <!-- 2. Category List View -->
+        <section id="view-category" class="view-page">
+          <div class="section-header" style="margin-bottom: 20px;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <img id="cat-header-icon" class="page-header-icon" src="assets/icons/applications-utilities.svg" alt="Kategori İkonu">
+              <h2 id="cat-header-title" class="section-title" style="font-size:22px;">Kategori</h2>
+            </div>
+          </div>
+          <div class="section-header">
+            <h3 class="section-title" data-i18n="all_applications">Tüm Uygulamalar</h3>
+          </div>
+          <div id="category-grid" class="cards-grid"></div>
+        </section>
+
+        <!-- 3. App Detail View -->
+        <section id="view-detail" class="view-page">
+          <div class="detail-top-box">
+            <img id="detail-icon" class="detail-app-icon" src="" alt="App Icon">
+            <div class="detail-info">
+              <div class="detail-name-row">
+                <h2 id="detail-name" class="detail-name">Uygulama Adı</h2>
+                <span id="detail-flatpak-badge" class="flatpak-badge" style="display:none;">Flatpak</span>
+              </div>
+              <p id="detail-summary" class="detail-summary">Özet</p>
+              <span id="detail-category" class="detail-category">Kategori</span>
+            </div>
+            <div id="detail-install-container"></div>
+          </div>
+
+          <!-- Stats Box -->
+          <div class="stats-box">
+            <div class="stat-item">
+              <span class="stat-title" data-i18n="rating">Puanlama</span>
+              <span id="stat-rating" class="stat-value">4.5 ★</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <span class="stat-title" data-i18n="downloads">İndirme</span>
+              <span id="stat-downloads" class="stat-value">0</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <span class="stat-title" data-i18n="size">Boyut</span>
+              <span id="stat-size" class="stat-value">-</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <span class="stat-title" data-i18n="dependencies">Bağımlılık</span>
+              <span id="stat-deps" class="stat-value">0</span>
+            </div>
+          </div>
+
+          <!-- Gallery -->
+          <div id="detail-gallery" class="gallery-scroll"></div>
+
+          <!-- Description -->
+          <div class="section-header">
+            <h3 class="section-title" data-i18n="about">Hakkında</h3>
+          </div>
+          <p id="detail-description" style="font-size:13px; line-height:1.5; color:var(--text-primary); margin-bottom:20px; word-break:break-word;"></p>
+          <div class="sidebar-divider" style="margin-bottom:20px;"></div>
+
+          <!-- Metadata Grid -->
+          <div id="detail-meta-grid" class="metadata-grid"></div>
+        </section>
+
+        <!-- 4. Installed & Updates View -->
+        <section id="view-installed" class="view-page">
+          <div class="section-header" style="margin-bottom:20px;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <img src="assets/icons/download.svg" class="page-header-icon" alt="Güncellemeler">
+              <h2 class="section-title" style="font-size:22px;" data-i18n="updates_title">Güncellemeler</h2>
+            </div>
+            <div style="display:flex; gap:10px;">
+              <!-- <button id="btn-update-repo" class="btn-action install">
+                <img src="assets/icons/view-refresh.svg" alt="Yenile">
+                <span data-i18n="btn_update_repo">Depoyu Güncelle</span>
+              </button> -->
+              <button id="btn-check-updates" class="btn-action install">
+                <img src="assets/icons/view-refresh.svg" alt="Denetle">
+                <span data-i18n="btn_check_updates">Güncellemeleri Denetle</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Updates Section -->
+          <div class="section-header">
+            <h3 id="updates-section-title" class="section-title">İndirilenler & Güncellemeler (0)</h3>
+          </div>
+          <div id="updates-grid" class="cards-grid"></div>
+
+          <div class="sidebar-divider" style="margin:20px 0;"></div>
+
+          <!-- All Installed Section -->
+          <div class="section-header">
+            <h3 class="section-title" data-i18n="all_applications">Tüm Uygulamalar</h3>
+          </div>
+          <div id="installed-grid" class="cards-grid"></div>
+        </section>
+
+        <!-- 5. Search Results View -->
+        <section id="view-search" class="view-page">
+          <div class="section-header" style="margin-bottom:20px;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <img src="assets/icons/edit-find.svg" class="page-header-icon" alt="Arama">
+              <h2 id="search-results-title" class="section-title" style="font-size:22px;">Arama Sonuçları...</h2>
+            </div>
+          </div>
+          <div class="section-header">
+            <h3 class="section-title" data-i18n="all_applications">Tüm Uygulamalar</h3>
+          </div>
+          <div id="search-apps-grid" class="cards-grid"></div>
+
+          <div class="section-header" style="margin-top:20px;">
+            <h3 class="section-title" data-i18n="packages">Paketler</h3>
+          </div>
+          <div id="search-pkgs-grid" class="cards-grid"></div>
+        </section>
+
+        <!-- 6. Settings View -->
+        <section id="view-settings" class="view-page">
+          <div class="section-header" style="margin-bottom:24px;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <img src="assets/icons/settings-configure.svg" class="page-header-icon" alt="Ayarlar">
+              <h2 class="section-title" style="font-size:22px;" data-i18n="settings_title">Ayarlar</h2>
+            </div>
+          </div>
+
+          <!-- General Section -->
+          <div class="settings-section-title" data-i18n="settings_section_general">Genel ve Başlangıç</div>
+          <div class="settings-card">
+            <div class="setting-row">
+              <label class="setting-check-label">
+                <input type="checkbox" id="setting-autostart">
+                <span data-i18n="settings_autostart">Sistem Açılışında Başlat</span>
+              </label>
+              <span class="setting-desc" data-i18n="settings_autostart_desc">Sistem açıldığında PiSiM arka planda otomatik olarak çalışır</span>
+            </div>
+            <div class="setting-row">
+              <label class="setting-check-label">
+                <input type="checkbox" id="setting-close-to-tray" checked>
+                <span data-i18n="settings_close_to_tray">Kapatıldığında Arka Planda Çalış</span>
+              </label>
+              <span class="setting-desc" data-i18n="settings_close_to_tray_desc">Kapat butonuna basıldığında uygulamayı görev çubuğu tepsisine küçültür</span>
+            </div>
+          </div>
+
+          <!-- Updates Section -->
+          <div class="settings-section-title" data-i18n="settings_section_updates">Güncelleme Denetleyici Ayarları</div>
+          <div class="settings-card">
+            <div class="setting-row">
+              <label class="setting-check-label" style="margin-bottom:6px;" data-i18n="settings_auto_check_interval">Otomatik Güncelleme Denetleme Sıklığı</label>
+              <select id="setting-interval" class="setting-select">
+                <option value="0" data-i18n="interval_disabled">Devre Dışı</option>
+                <option value="1" data-i18n="interval_1h">Her 1 Saatte Bir</option>
+                <option value="4" selected data-i18n="interval_4h">Her 4 Saatte Bir</option>
+                <option value="12" data-i18n="interval_12h">Her 12 Saatte Bir</option>
+                <option value="24" data-i18n="interval_24h">Günde Bir (24 Saat)</option>
+              </select>
+            </div>
+            <div class="setting-row">
+              <label class="setting-check-label">
+                <input type="checkbox" id="setting-auto-install">
+                <span data-i18n="settings_auto_install_updates">Güncellemeleri Otomatik Yükle</span>
+              </label>
+              <span class="setting-desc" data-i18n="settings_auto_install_updates_desc">Yeni güncellemeler bulunduğunda arka planda otomatik olarak indirir ve kurar</span>
+            </div>
+          </div>
+
+          <!-- Language Section -->
+          <div class="settings-section-title" data-i18n="settings_section_language">Dil Seçenekleri</div>
+          <div class="settings-card">
+            <div class="setting-row">
+              <label class="setting-check-label" style="margin-bottom:6px;" data-i18n="settings_language_label">Uygulama Dili</label>
+              <select id="setting-language" class="setting-select">
+                <option value="tr">Türkçe</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <!-- 7. About View -->
+        <section id="view-about" class="view-page">
+          <div class="about-container">
+            <img src="assets/pisim.png" class="about-logo" alt="Logo">
+            <h2 class="about-app-name" data-i18n="about_app_name">PiSiM - PiSi Market</h2>
+            <span class="about-ver-pill" data-i18n="about_version">Sürüm 2.0.0</span>
+            <p class="about-desc" data-i18n="about_description">LupuS için modern paket yöneticisi ve uygulama mağazası.</p>
+            
+            <div class="about-card">
+              <div style="font-weight:600;" data-i18n="about_developer">TeknoAnka tarafından geliştirilmiştir</div>
+              <div style="font-weight:600;"><a href="https://www.teknoanka.com/" target="_blank" style="color:var(--accent-teal); text-decoration:none;">www.teknoanka.com</a></div>
+              <div style="color:var(--text-secondary);" data-i18n="about_license">Lisans: GNU Genel Kamu Lisansı v3.0</div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

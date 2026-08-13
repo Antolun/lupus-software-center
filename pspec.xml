@@ -10,37 +10,28 @@
         </Packager>
         <License>GPLv3</License>
         <IsA>app:gui</IsA>
-        <Summary>PiSi Market - Modern Software Center for LupuS</Summary>
-        <Description>PiSiM (PiSi Market) is a modern, high-performance Software Center built with PyQt6 for the LupuS Operating System, supporting native PiSi package management and Flatpak applications.</Description>
+        <Summary>PiSiM - PiSi Market</Summary>
+        <Description>PiSiM is a modern, fast and lightweight package manager and application store for the LupuS operating system.</Description>
     </Source>
 
     <Package>
         <Name>pisim</Name>
         <RuntimeDependencies>
-            <Dependency>python3</Dependency>
-            <Dependency>python3-qt6</Dependency>
+            <Dependency>rust</Dependency>
         </RuntimeDependencies>
         <Files>
             <Path fileType="executable">/usr/bin/pisim</Path>
-            <Path fileType="data">/usr/share/pisim</Path>
-            <Path fileType="data">/usr/share/applications/com.teknoanka.pisim.desktop</Path>
+            <Path fileType="data">/usr/share/applications/pisim.desktop</Path>
             <Path fileType="data">/usr/share/icons/hicolor/128x128/apps/pisim.png</Path>
             <Path fileType="doc">/usr/share/doc/pisim</Path>
         </Files>
     </Package>
 
     <History>
-        <Update release="2">
-            <Date>2026-08-09</Date>
-            <Version>1.2.1</Version>
-            <Comment>In the backend system, PiSi python api started to be used instead of the subprocess library.</Comment>
-            <Name>Solzic0</Name>
-            <Email>solzic0@yandex.com</Email>
-        </Update>
         <Update release="1">
-            <Date>2026-08-09</Date>
-            <Version>1.2.0</Version>
-            <Comment>PiSiM package release</Comment>
+            <Date>2026-08-13</Date>
+            <Version>2.0.0</Version>
+            <Comment>Rust and Tauri port release</Comment>
             <Name>Solzic0</Name>
             <Email>solzic0@yandex.com</Email>
         </Update>

@@ -9,7 +9,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PISIM_SRC_DIR="${SCRIPT_DIR}"
 cd "${SCRIPT_DIR}"
 
-echo "[1/1] Creating PiSi package (.pisi)..."
+echo "[1/2] Building Rust / Tauri release binary..."
+cd src-tauri
+cargo build --release
+cd ..
+
+echo "[2/2] Creating PiSi package (.pisi)..."
 if command -v pisi &>/dev/null; then
     pisi build pspec.xml --no-sandbox --ignore-dependency
 else
@@ -26,11 +31,11 @@ if [ -n "${PISI_FILE}" ] && [ -f "${PISI_FILE}" ]; then
     if [ "${PISI_FILE}" != "${TARGET_PATH}" ]; then
         cp -f "${PISI_FILE}" "${TARGET_PATH}"
     fi
-    
+
     if [ -n "${SUDO_USER:-}" ]; then
         chown "${SUDO_USER}:" "${TARGET_PATH}" 2>/dev/null || true
     fi
-    
+
     echo ""
     echo "=========================================="
     echo " SUCCESS! .pisi package saved to:"

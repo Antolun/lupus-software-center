@@ -1,6 +1,5 @@
 #!/usr/bin/python3
 from pisi.actionsapi import pisitools
-from pisi.actionsapi import shelltools
 import os
 
 WorkDir = "."
@@ -11,47 +10,40 @@ def build():
 def install():
     src_dir = os.environ.get("PISIM_SRC_DIR", os.getcwd())
 
-    # Copy application main entry and package directory
-    main_py = os.path.join(src_dir, "main.py")
-    if not os.path.isfile(main_py):
-        main_py = "main.py"
-    if os.path.isfile(main_py):
-        pisitools.insinto("/usr/share/pisim", main_py)
+    possible_bins = [
+        os.path.join(src_dir, "src-tauri/target/release/pisim"),
+        os.path.join(src_dir, "target/release/pisim"),
+        os.path.join(src_dir, "pisim"),
+        "src-tauri/target/release/pisim",
+        "target/release/pisim",
+        "pisim",
+    ]
 
-    pisi_store_dir = os.path.join(src_dir, "pisi_store")
-    if not os.path.isdir(pisi_store_dir):
-        pisi_store_dir = "pisi_store"
-    if os.path.isdir(pisi_store_dir):
-        pisitools.insinto("/usr/share/pisim", pisi_store_dir)
+    bin_path = None
+    for p in possible_bins:
+        if os.path.isfile(p):
+            bin_path = p
+            break
 
-    # Launcher script (/usr/bin/pisim)
-    launcher_path = os.path.join(src_dir, "pisim")
-    if not os.path.isfile(launcher_path):
-        launcher_path = "pisim"
-    
-    if not os.path.isfile(launcher_path):
-        with open("pisim", "w") as f:
-            f.write("#!/bin/bash\nexec python3 /usr/share/pisim/main.py \"$@\"\n")
-        os.chmod("pisim", 0o755)
-        launcher_path = "pisim"
+    if not bin_path:
+        raise RuntimeError(f"pisim binary not found in any path! Searched: {possible_bins}")
 
-    pisitools.dobin(launcher_path)
+    pisitools.dobin(bin_path)
 
-    # Desktop entry
-    desktop_path = os.path.join(src_dir, "com.teknoanka.pisim.desktop")
+    desktop_path = os.path.join(src_dir, "pisim.desktop")
     if not os.path.isfile(desktop_path):
-        desktop_path = "com.teknoanka.pisim.desktop"
+        desktop_path = "pisim.desktop"
     if os.path.isfile(desktop_path):
         pisitools.insinto("/usr/share/applications", desktop_path)
 
-    # App icon
-    icon_path = os.path.join(src_dir, "pisi_store", "assets", "pisim.png")
+    icon_path = os.path.join(src_dir, "src-tauri/icons/128x128.png")
     if not os.path.isfile(icon_path):
-        icon_path = os.path.join("pisi_store", "assets", "pisim.png")
+        icon_path = os.path.join(src_dir, "logo.png")
+    if not os.path.isfile(icon_path):
+        icon_path = "src-tauri/icons/128x128.png"
     if os.path.isfile(icon_path):
         pisitools.insinto("/usr/share/icons/hicolor/128x128/apps", icon_path, "pisim.png")
 
-    # Documentation & License
     readme_path = os.path.join(src_dir, "README.md")
     if not os.path.isfile(readme_path):
         readme_path = "README.md"

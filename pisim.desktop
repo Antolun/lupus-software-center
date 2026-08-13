@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PiSiM
+GenericName=PiSi Market
+Comment=Modern and lightweight package manager for LupuS
+Comment[tr]=LupuS için modern ve hafif paket yöneticisi
+Exec=pisim
+Icon=pisim
+Terminal=false
+Categories=System;PackageManager;LupuS;
+Keywords=package;manager;pisim;pisi;store;lupus;
+StartupNotify=true
+StartupWMClass=pisim

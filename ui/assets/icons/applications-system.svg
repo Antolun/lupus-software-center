@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <linearGradient id="sysGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="16" height="16" rx="3" ry="3" fill="url(#sysGrad)" stroke="#047857" stroke-width="1.5"/>
+  <rect x="9" y="9" width="6" height="6" rx="1" fill="#ecfdf5"/>
+  <line x1="9" y1="1" x2="9" y2="4" stroke="#10b981" stroke-width="2" stroke-linecap="round"/>
+  <line x1="15" y1="1" x2="15" y2="4" stroke="#10b981" stroke-width="2" stroke-linecap="round"/>
+  <line x1="9" y1="20" x2="9" y2="23" stroke="#10b981" stroke-width="2" stroke-linecap="round"/>
+  <line x1="15" y1="20" x2="15" y2="23" stroke="#10b981" stroke-width="2" stroke-linecap="round"/>
+  <line x1="20" y1="9" x2="23" y2="9" stroke="#10b981" stroke-width="2" stroke-linecap="round"/>
+  <line x1="20" y1="14" x2="23" y2="14" stroke="#10b981" stroke-width="2" stroke-linecap="round"/>
+  <line x1="1" y1="9" x2="4" y2="9" stroke="#10b981" stroke-width="2" stroke-linecap="round"/>
+  <line x1="1" y1="14" x2="4" y2="14" stroke="#10b981" stroke-width="2" stroke-linecap="round"/>
+</svg>

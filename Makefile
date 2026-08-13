@@ -1,12 +1,15 @@
-.PHONY: all run package clean
+.PHONY: all build run package clean
 
-all: run
+all: build
+
+build:
+	cd src-tauri && cargo build --release
 
 run:
-	python3 main.py
+	cd src-tauri && cargo run
 
-package:
+package: build
 	./build-pisi.sh
 
 clean:
-	rm -f *.pisi pisim
+	cd src-tauri && cargo clean
