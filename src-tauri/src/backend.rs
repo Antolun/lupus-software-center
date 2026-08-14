@@ -701,7 +701,7 @@ fn detect_developer(name: &str, homepage: &str, component: &str) -> String {
         return "VideoLAN Project".into();
     }
     if n.contains("lupus") || n.contains("pisi") || n.contains("auratask") || n.contains("aerosky") {
-        return "TeknoAnka".into();
+        return "Antolun".into();
     }
     if !homepage.is_empty() {
         if let Some(host) = homepage.trim_start_matches("https://").trim_start_matches("http://").split('/').next() {

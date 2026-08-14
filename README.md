@@ -1,6 +1,6 @@
 # PiSiM — PiSi Market
 
-A modern, fast and lightweight package manager and application store for the [LupuS](https://lupus.teknoanka.com/) operating system, powered by a Rust backend and a Tauri-based web frontend.
+A modern, fast and lightweight package manager and application store for the [LupuS](https://lupus.antolun.com/) operating system, powered by a Rust backend and a Tauri-based web frontend.
 
 PiSiM lets you install, remove and update both native PiSi packages from the official repositories and Flatpak applications from Flathub, all through a clean and responsive interface that matches the look and feel of the original PyQt6 application.
 
@@ -49,12 +49,12 @@ pisi build pspec.xml --no-sandbox --ignore-dependency
 
 ### Makefile targets
 
-| Target      | Description                          |
-|-------------|--------------------------------------|
-| `make build` | Compile the release binary          |
-| `make run`   | Run in debug mode                   |
+| Target         | Description                        |
+| -------------- | ---------------------------------- |
+| `make build`   | Compile the release binary         |
+| `make run`     | Run in debug mode                  |
 | `make package` | Build the release binary + `.pisi` |
-| `make clean` | Clean the cargo build artifacts     |
+| `make clean`   | Clean the cargo build artifacts    |
 
 ## Project Structure
 

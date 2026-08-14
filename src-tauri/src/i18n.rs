@@ -116,7 +116,7 @@ fn get_translations() -> HashMap<&'static str, HashMap<&'static str, String>> {
     en.insert("flatpak_pkg", "Flatpak Package".into());
     en.insert("pisi_pkg", "PiSi Package".into());
     en.insert("lupus_main_repo", "Main Repository".into());
-    en.insert("lupus_community", "TeknoAnka".into());
+    en.insert("lupus_community", "Antolun".into());
     en.insert("flathub_community", "FlatHub".into());
     en.insert("packager_name", "Packager".into());
     en.insert("packager_email", "Packager Email".into());
@@ -183,7 +183,7 @@ fn get_translations() -> HashMap<&'static str, HashMap<&'static str, String>> {
     en.insert("about_app_name", "PiSiM - PiSi Market".into());
     en.insert("about_version", "Version 2.0.0".into());
     en.insert("about_description", "Modern package manager and application store for LupuS.".into());
-    en.insert("about_developer", "Developed by TeknoAnka".into());
+    en.insert("about_developer", "Developed by Antolun".into());
     en.insert("about_website", "Visit Website".into());
     en.insert("about_license", "License: GNU General Public License v3.0".into());
 
@@ -241,7 +241,7 @@ fn get_translations() -> HashMap<&'static str, HashMap<&'static str, String>> {
     tr_map.insert("flatpak_pkg", "Flatpak Paketi".into());
     tr_map.insert("pisi_pkg", "PiSi Paketi".into());
     tr_map.insert("lupus_main_repo", "Ana Depo".into());
-    tr_map.insert("lupus_community", "TeknoAnka".into());
+    tr_map.insert("lupus_community", "Antolun".into());
     tr_map.insert("flathub_community", "FlatHub".into());
     tr_map.insert("packager_name", "Paketleyici".into());
     tr_map.insert("packager_email", "Paketleyici E-Posta".into());
@@ -303,7 +303,7 @@ fn get_translations() -> HashMap<&'static str, HashMap<&'static str, String>> {
     tr_map.insert("about_app_name", "PiSiM - PiSi Market".into());
     tr_map.insert("about_version", "Sürüm 2.0.0".into());
     tr_map.insert("about_description", "LupuS için modern paket yöneticisi ve uygulama mağazası.".into());
-    tr_map.insert("about_developer", "TeknoAnka tarafından geliştirilmiştir".into());
+    tr_map.insert("about_developer", "Antolun tarafından geliştirilmiştir".into());
     tr_map.insert("about_website", "Web Sitesini Ziyaret Et".into());
     tr_map.insert("about_license", "Lisans: GNU Genel Kamu Lisansı v3.0".into());
 

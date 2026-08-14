@@ -2,7 +2,7 @@
 name = "pisim"
 version = "2.0.0"
 description = "PiSiM - PiSi Market"
-authors = ["Solzic0 <solzic0@yandex.com>", "TeknoAnka <admin@teknoanka.com>"]
+authors = ["Solzic0 <solzic0@yandex.com>", "Antolun <admin@antolun.com>"]
 license = "GPL-3.0"
 repository = ""
 edition = "2021"

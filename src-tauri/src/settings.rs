@@ -41,7 +41,7 @@ fn autostart_file() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".config")
         .join("autostart")
-        .join("com.teknoanka.pisim.desktop")
+        .join("pisim.desktop")
 }
 
 pub fn load_settings() -> AppSettings {
