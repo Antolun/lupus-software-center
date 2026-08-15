@@ -1,4 +1,4 @@
-// PiSiM – Ayarlar Yönetimi
+// LupuS Software Center – Ayarlar Yönetimi
 // Python settings.py'nin Rust karşılığı
 
 use serde::{Deserialize, Serialize};
@@ -29,7 +29,7 @@ fn config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".config")
-        .join("pisim")
+        .join("lupus-software-center")
 }
 
 fn settings_file() -> PathBuf {
@@ -41,7 +41,7 @@ fn autostart_file() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".config")
         .join("autostart")
-        .join("pisim.desktop")
+        .join("lupus-software-center.desktop")
 }
 
 pub fn load_settings() -> AppSettings {
@@ -90,7 +90,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
 
         let exe = std::env::current_exe()
-            .unwrap_or_else(|_| PathBuf::from("pisim"))
+            .unwrap_or_else(|_| PathBuf::from("lupus-software-center"))
             .to_string_lossy()
             .to_string();
 
@@ -99,10 +99,10 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
             .and_then(|p| p.parent().map(|d| d.join("icons/128x128.png")))
             .filter(|p| p.exists())
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "pisim".to_string());
+            .unwrap_or_else(|| "lupus-software-center".to_string());
 
         let content = format!(
-            "[Desktop Entry]\nType=Application\nName=PiSiM\nComment=PiSi Market\nExec={} --minimized\nIcon={}\nTerminal=false\nCategories=System;PackageManager;\nX-GNOME-Autostart-enabled=true\nStartupNotify=false\n",
+            "[Desktop Entry]\nType=Application\nName=LupuS Software Center\nComment=Luppo Market\nExec={} --minimized\nIcon={}\nTerminal=false\nCategories=System;PackageManager;\nX-GNOME-Autostart-enabled=true\nStartupNotify=false\n",
             exe, icon
         );
         std::fs::write(&file, content)

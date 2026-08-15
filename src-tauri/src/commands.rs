@@ -1,16 +1,16 @@
-// PiSiM – Tauri Komutları (Frontend ↔ Backend köprüsü)
+// LupuS Software Center – Tauri Komutları (Frontend ↔ Backend köprüsü)
 // Python mainwindow.py worker thread'lerinin ve backend metodlarının Tauri karşılığı
 
-use tauri::State;
+use tauri::{State, Emitter};
 use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
-use crate::backend::{PackageInfo, PisiBackend};
+use crate::backend::{PackageInfo, LuppoBackend};
 use crate::settings::{self, AppSettings};
 use crate::i18n;
 
 // ─── Global Backend State ───────────────────────────────────────────────────
 
-pub struct BackendState(pub Mutex<PisiBackend>);
+pub struct BackendState(pub Mutex<LuppoBackend>);
 
 // ─── Yanıt Türleri ──────────────────────────────────────────────────────────
 
@@ -39,6 +39,9 @@ pub struct CategoryInfo {
 fn icon_path_to_data_uri(icon_path: &str) -> String {
     if icon_path.is_empty() {
         return String::new();
+    }
+    if icon_path.starts_with("http://") || icon_path.starts_with("https://") || icon_path.starts_with("data:") {
+        return icon_path.to_string();
     }
     match std::fs::read(icon_path) {
         Ok(bytes) => {
@@ -120,14 +123,26 @@ pub async fn get_package_details(package_name: String, state: State<'_, BackendS
 }
 
 #[tauri::command]
-pub async fn install_package(package_name: String, state: State<'_, BackendState>) -> Result<ActionResponse, String> {
-    let backend = state.0.lock().map_err(|e| e.to_string())?;
-    let (success, message) = backend.install_package(&package_name);
-    
+pub async fn install_package(
+    package_name: String,
+    state: State<'_, BackendState>,
+    app_handle: tauri::AppHandle,
+) -> Result<ActionResponse, String> {
+    let pkg_name = package_name.clone();
+    let app_handle_cb = app_handle.clone();
+
+    // Clone the backend out of the lock so we don't hold MutexGuard across .await
+    let backend_clone = {
+        let backend = state.0.lock().map_err(|e| e.to_string())?;
+        backend.clone()
+    };
+
+    let (success, message) = backend_clone.install_package_with_progress(&pkg_name, &app_handle, move |event| {
+        let _ = app_handle_cb.emit("package-progress", &event);
+    }).await;
+
     if success {
-        drop(backend);
         let mut backend = state.0.lock().map_err(|e| e.to_string())?;
-        let pkg_name = package_name.clone();
         if let Some(pkg) = backend.available_packages.get_mut(&pkg_name) {
             pkg.installed = true;
             pkg.has_update = false;
@@ -138,25 +153,38 @@ pub async fn install_package(package_name: String, state: State<'_, BackendState
             backend.installed_packages.insert(pkg_name, pkg);
         }
     }
-    
+
     Ok(ActionResponse { success, message })
 }
 
 #[tauri::command]
-pub async fn remove_package(package_name: String, state: State<'_, BackendState>) -> Result<ActionResponse, String> {
-    let backend = state.0.lock().map_err(|e| e.to_string())?;
-    let (success, message) = backend.remove_package(&package_name);
-    
+pub async fn remove_package(
+    package_name: String,
+    state: State<'_, BackendState>,
+    app_handle: tauri::AppHandle,
+) -> Result<ActionResponse, String> {
+    let pkg_name = package_name.clone();
+    let app_handle_cb = app_handle.clone();
+
+    // Clone the backend out of the lock so we don't hold MutexGuard across .await
+    let backend_clone = {
+        let backend = state.0.lock().map_err(|e| e.to_string())?;
+        backend.clone()
+    };
+
+    let (success, message) = backend_clone.remove_package_with_progress(&pkg_name, &app_handle, move |event| {
+        let _ = app_handle_cb.emit("package-progress", &event);
+    }).await;
+
     if success {
-        drop(backend);
         let mut backend = state.0.lock().map_err(|e| e.to_string())?;
-        backend.installed_packages.remove(&package_name);
-        if let Some(pkg) = backend.available_packages.get_mut(&package_name) {
+        backend.installed_packages.remove(&pkg_name);
+        if let Some(pkg) = backend.available_packages.get_mut(&pkg_name) {
             pkg.installed = false;
             pkg.has_update = false;
         }
     }
-    
+
     Ok(ActionResponse { success, message })
 }
 
@@ -250,9 +278,9 @@ pub async fn set_autostart(enabled: bool) -> Result<ActionResponse, String> {
 }
 
 #[tauri::command]
-pub async fn get_pisi_available(state: State<'_, BackendState>) -> Result<bool, String> {
+pub async fn get_luppo_available(state: State<'_, BackendState>) -> Result<bool, String> {
     let backend = state.0.lock().map_err(|e| e.to_string())?;
-    Ok(backend.pisi_available)
+    Ok(backend.luppo_available)
 }
 
 #[tauri::command]
@@ -314,7 +342,7 @@ pub async fn get_categories(state: State<'_, BackendState>) -> Result<Vec<Catego
     result.push(CategoryInfo {
         id: "updates".to_string(),
         icon: "view-refresh".to_string(),
-        name: i18n::tr("nav_updates"),
+        name: i18n::tr("nav_downloads"),
         count: update_count,
     });
 

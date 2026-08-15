@@ -1,4 +1,4 @@
-// PiSiM – Sistem Tepsisi (System Tray)
+// LupuS Software Center – Sistem Tepsisi (System Tray)
 // Python MainWindow._setup_system_tray()'ın Rust karşılığı
 
 use crate::i18n;
@@ -18,10 +18,10 @@ pub fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
 
     let menu = Menu::with_items(app, &[&open_item, &check_item, &quit_item])?;
 
-    let _tray = TrayIconBuilder::with_id("pisim-tray")
+    let _tray = TrayIconBuilder::with_id("lupus-software-center-tray")
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("PiSiM")
-        .title("PiSiM")
+        .tooltip("LupuS Software Center")
+        .title("LupuS Software Center")
         .menu(&menu)
         .on_menu_event(move |app, event| {
             match event.id.as_ref() {

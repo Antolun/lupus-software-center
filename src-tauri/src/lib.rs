@@ -1,4 +1,4 @@
-// PiSiM - Rust Backend
+// LupuS Software Center - Rust Backend
 // Tüm paket yönetimi, Flatpak entegrasyonu ve sistem komutları burada
 
 mod backend;
@@ -12,8 +12,8 @@ use tauri::Manager;
 
 pub fn run(minimized: bool) {
     // Tepsi (StatusNotifierItem) başlığı g_get_application_name()'den türetilir;
-    // aksi halde binary adı ("pisim") görünür.
-    glib::set_application_name("PiSiM");
+    // aksi halde binary adı ("lupus-software-center") görünür.
+    glib::set_application_name("LupuS Software Center");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -35,7 +35,7 @@ pub fn run(minimized: bool) {
         .plugin(tauri_plugin_fs::init())
         .setup(move |app| {
             // BackendState initialize
-            app.manage(commands::BackendState(Mutex::new(backend::PisiBackend::new())));
+            app.manage(commands::BackendState(Mutex::new(backend::LuppoBackend::new())));
             // Tray icon kurulumu
             tray::setup_tray(app)?;
             // Arka plan güncelleme denetleyicisi
@@ -71,7 +71,7 @@ pub fn run(minimized: bool) {
             commands::load_settings,
             commands::save_settings,
             commands::set_autostart,
-            commands::get_pisi_available,
+            commands::get_luppo_available,
             commands::get_flatpak_available,
             commands::get_categories,
             commands::get_icon_path,
@@ -80,7 +80,7 @@ pub fn run(minimized: bool) {
             commands::open_external,
         ])
         .run(tauri::generate_context!())
-        .expect("PiSiM başlatılamadı");
+        .expect("LupuS Software Center başlatılamadı");
 }
 
 // ─── Arka Plan Servisleri (Otomatik Güncelleme Denetleyici) ─────────────────

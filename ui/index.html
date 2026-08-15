@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PiSiM - PiSi Market</title>
+  <title>LupuS Software Center - Luppo Market</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <!-- Loading Overlay -->
   <div id="loading-overlay">
-    <img src="assets/pisim.png" class="loading-logo" alt="PiSiM Logo">
-    <div class="loading-app-name">PiSiM</div>
+    <img src="assets/lupus-software-center.png" class="loading-logo" alt="LupuS Software Center">
+    <div class="loading-app-name">LupuS Software Center</div>
     <div class="loading-spinner"></div>
     <div class="loading-bar-wrap">
       <div id="loading-bar-fill" class="loading-bar-fill"></div>
@@ -51,8 +51,8 @@
     <!-- Sol Menü (Sidebar) -->
     <aside id="sidebar">
       <div class="sidebar-header">
-        <img src="assets/pisim.png" alt="PiSiM">
-        <h1>PiSiM</h1>
+        <img src="assets/lupus-software-center.png" alt="LupuS Software Center">
+        <h1 data-i18n="software_center">Yazılım Merkezi</h1>
       </div>
 
       <div class="sidebar-scroll" id="sidebar-nav">
@@ -67,8 +67,8 @@
 
       <div class="sidebar-bottom">
         <button class="sidebar-btn" data-cat="updates">
-          <img src="assets/icons/view-refresh.svg" class="sidebar-icon-img" alt="Güncellemeler">
-          <span class="btn-text" data-i18n="nav_updates">Güncellemeler</span>
+          <img src="assets/icons/download.svg" class="sidebar-icon-img" alt="İndirmeler">
+          <span class="btn-text" data-i18n="nav_downloads">İndirmeler</span>
           <span id="sidebar-updates-badge" class="sidebar-badge" style="display:none;"></span>
         </button>
         <button class="sidebar-btn" data-cat="settings">
@@ -86,9 +86,9 @@
     <main id="main-area">
       <!-- Topbar -->
       <header id="topbar">
-        <!-- <button id="btn-nav-back" class="nav-back-btn" title="Geri">
+        <button id="btn-nav-back" class="nav-back-btn" title="Geri">
           <img src="assets/icons/go-previous.svg" alt="Geri">
-        </button> -->
+        </button>
         <div class="search-box-wrap">
           <img src="assets/icons/edit-find.svg" class="search-icon-img" alt="Ara">
           <input type="text" id="search-input" class="search-input" placeholder="Uygulama ara..." data-i18n-placeholder="search_placeholder">
@@ -182,8 +182,8 @@
         <section id="view-installed" class="view-page">
           <div class="section-header" style="margin-bottom:20px;">
             <div style="display:flex; align-items:center; gap:12px;">
-              <img src="assets/icons/download.svg" class="page-header-icon" alt="Güncellemeler">
-              <h2 class="section-title" style="font-size:22px;" data-i18n="updates_title">Güncellemeler</h2>
+              <img src="assets/icons/download.svg" class="page-header-icon" alt="İndirmeler">
+              <h2 class="section-title" style="font-size:22px;" data-i18n="updates_title">İndirmeler</h2>
             </div>
             <div style="display:flex; gap:10px;">
               <!-- <button id="btn-update-repo" class="btn-action install">
@@ -248,7 +248,7 @@
                 <input type="checkbox" id="setting-autostart">
                 <span data-i18n="settings_autostart">Sistem Açılışında Başlat</span>
               </label>
-              <span class="setting-desc" data-i18n="settings_autostart_desc">Sistem açıldığında PiSiM arka planda otomatik olarak çalışır</span>
+              <span class="setting-desc" data-i18n="settings_autostart_desc">Sistem açıldığında LupuS Software Center arka planda otomatik olarak çalışır</span>
             </div>
             <div class="setting-row">
               <label class="setting-check-label">
@@ -297,9 +297,9 @@
         <!-- 7. About View -->
         <section id="view-about" class="view-page">
           <div class="about-container">
-            <img src="assets/pisim.png" class="about-logo" alt="Logo">
-            <h2 class="about-app-name" data-i18n="about_app_name">PiSiM - PiSi Market</h2>
-            <span class="about-ver-pill" data-i18n="about_version">Sürüm 2.0.0</span>
+            <img src="assets/lupus-software-center.png" class="about-logo" alt="Logo">
+            <h2 class="about-app-name" data-i18n="about_app_name">LupuS Software Center - Luppo Market</h2>
+            <span class="about-ver-pill" data-i18n="about_version">Sürüm 2.0.1</span>
             <p class="about-desc" data-i18n="about_description">LupuS için modern paket yöneticisi ve uygulama mağazası.</p>
             
             <div class="about-card">

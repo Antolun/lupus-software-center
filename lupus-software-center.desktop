@@ -1,0 +1,16 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=LupuS Software Center
+Name[tr]=LupuS Yazılım Merkezi
+GenericName=LupuS Software Center
+GenericName[tr]=LupuS Yazılım Merkezi
+Comment=Modern and lightweight software center for LupuS
+Comment[tr]=LupuS için modern ve hafif yazılım merkezi
+Exec=lupus-software-center
+Icon=lupus-software-center
+Terminal=false
+Categories=System;PackageManager;LupuS;
+Keywords=package;manager;software;center;luppo;store;lupus;
+StartupNotify=true
+StartupWMClass=lupus-software-center

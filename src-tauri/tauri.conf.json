@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PiSiM",
-  "version": "2.0.0",
-  "identifier": "com.antolun.pisim",
+  "productName": "LupuS Software Center",
+  "version": "2.0.1",
+  "identifier": "com.antolun.lupus-software-center",
   "build": {
     "frontendDist": "../ui"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "PiSiM - PiSi Market",
+        "title": "LupuS Software Center - Luppo Market",
         "width": 1400,
         "height": 820,
         "minWidth": 1000,
@@ -39,7 +39,7 @@
       }
     },
     "trayIcon": {
-      "title": "PiSiM",
+      "title": "Luppo Market",
       "iconPath": "icons/128x128.png",
       "iconAsTemplate": false
     }

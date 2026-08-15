@@ -1,4 +1,4 @@
-// PiSiM - Backend: Paket veri yapıları ve işlemleri
+// LupuS Software Center - Backend: Paket veri yapıları ve işlemleri
 // Python backend.py'nin Rust karşılığı
 
 use crate::i18n;
@@ -6,10 +6,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
+use tauri::Emitter;
 
 // ─── Sabitler ──────────────────────────────────────────────────────────────
 
-pub const VERSION: &str = "2.0.0";
+pub const VERSION: &str = "2.0.1";
 
 pub const ICON_SEARCH_PATHS: &[&str] = &[
     "/usr/share/icons/hicolor/scalable/apps",
@@ -103,7 +104,7 @@ impl PackageInfo {
             dependencies_count: 0,
             tags: vec![],
             is_flatpak: false,
-            origin: "Pisi".to_string(),
+            origin: "Luppo".to_string(),
             screenshots: vec![],
             update_date: String::new(),
             vcs_url: String::new(),
@@ -111,27 +112,37 @@ impl PackageInfo {
     }
 }
 
-// ─── PisiBackend ──────────────────────────────────────────────────────────
+// ─── Progress Event ──────────────────────────────────────────────────────────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgressEvent {
+    pub package_name: String,
+    pub action: String, // "install", "update", "remove"
+    pub progress: u8,   // 0-100
+    pub status: String, // "downloading", "installing", "configuring", "completed", "error"
+    pub message: String,
+}
 
-#[derive(Default)]
-pub struct PisiBackend {
+// ─── LuppoBackend ──────────────────────────────────────────────────────────
+
+#[derive(Default, Clone)]
+pub struct LuppoBackend {
     pub installed_packages: HashMap<String, PackageInfo>,
     pub available_packages: HashMap<String, PackageInfo>,
-    pub pisi_available: bool,
+    pub luppo_available: bool,
     pub flatpak_available: bool,
 }
 
-impl PisiBackend {
+impl LuppoBackend {
     pub fn new() -> Self {
-        let pisi_available = check_command_available("pisi");
+        let luppo_available = check_command_available("luppo");
         let flatpak_available = check_command_available("flatpak");
         let mut backend = Self {
             installed_packages: HashMap::new(),
             available_packages: HashMap::new(),
-            pisi_available,
+            luppo_available,
             flatpak_available,
         };
-        if pisi_available {
+        if luppo_available {
             backend.load_installed_packages();
             backend.load_available_packages();
         }
@@ -143,30 +154,30 @@ impl PisiBackend {
     }
 
     pub fn load_installed_packages(&mut self) {
-        if !self.pisi_available {
+        if !self.luppo_available {
             return;
         }
-        let output = Command::new("pisi")
+        let output = Command::new("luppo")
             .arg("list-installed")
             .output();
 
         if let Ok(out) = output {
             if out.status.success() {
                 let text = String::from_utf8_lossy(&out.stdout);
-                self.parse_pisi_list_output(&text, true);
+                self.parse_luppo_list_output(&text, true);
             }
         }
     }
 
     pub fn load_available_packages(&mut self) {
-        if self.pisi_available {
-            let output = Command::new("pisi")
+        if self.luppo_available {
+            let output = Command::new("luppo")
                 .arg("list-available")
                 .output();
             if let Ok(out) = output {
                 if out.status.success() {
                     let text = String::from_utf8_lossy(&out.stdout);
-                    self.parse_pisi_list_output(&text, false);
+                    self.parse_luppo_list_output(&text, false);
                 }
             }
         }
@@ -179,7 +190,7 @@ impl PisiBackend {
         }
     }
 
-    fn parse_pisi_list_output(&mut self, text: &str, installed: bool) {
+    fn parse_luppo_list_output(&mut self, text: &str, installed: bool) {
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with("Depodaki") || line.starts_with("Total") {
@@ -231,8 +242,8 @@ impl PisiBackend {
 
         let mut pkg = self.get_all_packages().get(pkg_name).cloned().unwrap_or_else(|| PackageInfo::new(pkg_name));
 
-        if self.pisi_available {
-            if let Ok(out) = Command::new("pisi").args(["info", pkg_name]).output() {
+        if self.luppo_available {
+            if let Ok(out) = Command::new("luppo").args(["info", pkg_name]).output() {
                 if out.status.success() {
                     let text = String::from_utf8_lossy(&out.stdout);
                     for line in text.lines() {
@@ -333,6 +344,7 @@ impl PisiBackend {
                     pkg.version = version.to_string();
                     pkg.summary = format!("{} · {}", origin, app_id);
                     pkg.description = format!("{} ({}) Flatpak ({}) aracılığıyla kurulmuştur.", display_name, app_id, origin);
+                    pkg.developer = extract_flatpak_developer(app_id);
                     pkg.category = cat;
                     pkg.icon_name = icon_name;
                     pkg.icon_path = icon_path;
@@ -350,7 +362,7 @@ impl PisiBackend {
             return;
         }
         let output = Command::new("flatpak")
-            .args(["remote-ls", "--app", "--columns=application,name,version,origin,download-size,installed-size"])
+            .args(["remote-ls", /* "--app" */ "--columns=application,name,version,origin,download-size,installed-size"])
             .output();
 
         if let Ok(out) = output {
@@ -378,6 +390,7 @@ impl PisiBackend {
                     pkg.version = version.to_string();
                     pkg.summary = format!("{} · {}", origin, app_id);
                     pkg.description = format!("{} uygulaması Flatpak ({}) ile kurulabilir.", display_name, origin);
+                    pkg.developer = extract_flatpak_developer(app_id);
                     pkg.category = cat;
                     pkg.icon_name = icon_name;
                     pkg.icon_path = icon_path;
@@ -446,33 +459,242 @@ impl PisiBackend {
             };
             return run_flatpak_cmd(&cmd);
         }
-        if !self.pisi_available {
-            return (false, i18n::tr("pisi_missing"));
+        if !self.luppo_available {
+            return (false, i18n::tr("luppo_missing"));
         }
-        run_pisi_cmd(&["install", "-y", pkg_name])
+        run_luppo_cmd(&["install", "-y", pkg_name])
     }
 
-    pub fn remove_package(&self, pkg_name: &str) -> (bool, String) {
+    // ─── Async Install/Remove with Progress ──────────────────────────────────
+
+    pub async fn install_package_with_progress<F>(
+        &self,
+        pkg_name: &str,
+        app_handle: &tauri::AppHandle,
+        on_progress: F,
+    ) -> (bool, String)
+    where
+        F: FnMut(ProgressEvent) + Send + 'static,
+    {
         if pkg_name.starts_with("flatpak:") {
-            let real_id = pkg_name.trim_start_matches("flatpak:");
-            return run_flatpak_cmd(&["uninstall", "--noninteractive", "--assumeyes", real_id]);
+            return self.run_flatpak_with_progress(pkg_name, true, app_handle, on_progress).await;
         }
-        if !self.pisi_available {
-            return (false, i18n::tr("pisi_missing"));
+        if !self.luppo_available {
+            return (false, i18n::tr("luppo_missing"));
         }
-        run_pisi_cmd(&["remove", "-y", pkg_name])
+        self.run_luppo_with_progress(&["install", "-y", pkg_name], "install", pkg_name, app_handle, on_progress).await
+    }
+
+    pub async fn remove_package_with_progress<F>(
+        &self,
+        pkg_name: &str,
+        app_handle: &tauri::AppHandle,
+        on_progress: F,
+    ) -> (bool, String)
+    where
+        F: FnMut(ProgressEvent) + Send + 'static,
+    {
+        if pkg_name.starts_with("flatpak:") {
+            return self.run_flatpak_with_progress(pkg_name, false, app_handle, on_progress).await;
+        }
+        if !self.luppo_available {
+            return (false, i18n::tr("luppo_missing"));
+        }
+        self.run_luppo_with_progress(&["remove", "-y", pkg_name], "remove", pkg_name, app_handle, on_progress).await
+    }
+
+    async fn run_luppo_with_progress<F>(
+        &self,
+        args: &[&str],
+        action: &str,
+        pkg_name: &str,
+        app_handle: &tauri::AppHandle,
+        on_progress: F,
+    ) -> (bool, String)
+    where
+        F: FnMut(ProgressEvent) + Send + 'static,
+    {
+        let is_root = unsafe { libc::geteuid() == 0 };
+        let mut cmd = if is_root {
+            Command::new("luppo")
+        } else {
+            let mut c = Command::new("pkexec");
+            c.arg("luppo");
+            c
+        };
+        cmd.args(args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => return (false, e.to_string()),
+        };
+
+        let stdout = child.stdout.take().expect("stdout not captured");
+        let stderr = child.stderr.take().expect("stderr not captured");
+
+        use std::sync::{Arc, Mutex};
+        let pkg_name_owned = pkg_name.to_string();
+        let action_owned = action.to_string();
+        let app_handle_clone = app_handle.clone();
+
+        // Wrap on_progress in Arc<Mutex> so both closures can share it
+        let on_progress = Arc::new(Mutex::new(on_progress));
+        let on_progress_stderr = Arc::clone(&on_progress);
+
+        // Spawn task to read stdout
+        let stdout_task = tokio::task::spawn_blocking(move || {
+            read_output_lines(stdout, |line| {
+                let event = parse_luppo_progress(line, &pkg_name_owned, &action_owned);
+                if let Some(e) = event {
+                    if let Ok(mut cb) = on_progress.lock() { cb(e.clone()); }
+                    let _ = app_handle_clone.emit("package-progress", &e);
+                }
+            });
+        });
+
+        // Spawn task to read stderr
+        let pkg_name_stderr = pkg_name.to_string();
+        let action_stderr = action.to_string();
+        let app_handle_stderr = app_handle.clone();
+        let stderr_task = tokio::task::spawn_blocking(move || {
+            read_output_lines(stderr, |line| {
+                let event = parse_luppo_progress(line, &pkg_name_stderr, &action_stderr);
+                if let Some(e) = event {
+                    if let Ok(mut cb) = on_progress_stderr.lock() { cb(e.clone()); }
+                    let _ = app_handle_stderr.emit("package-progress", &e);
+                }
+            });
+        });
+
+        let _ = tokio::join!(stdout_task, stderr_task);
+
+        let status = match child.wait() {
+            Ok(s) => s,
+            Err(e) => return (false, e.to_string()),
+        };
+        if status.success() {
+            let _ = app_handle.emit("package-progress", &ProgressEvent {
+                package_name: pkg_name.to_string(),
+                action: action.to_string(),
+                progress: 100,
+                status: "completed".to_string(),
+                message: "İşlem tamamlandı".to_string(),
+            });
+            (true, "Başarılı".to_string())
+        } else {
+            let _ = app_handle.emit("package-progress", &ProgressEvent {
+                package_name: pkg_name.to_string(),
+                action: action.to_string(),
+                progress: 0,
+                status: "error".to_string(),
+                message: "İşlem başarısız oldu".to_string(),
+            });
+            (false, "Başarısız".to_string())
+        }
+    }
+
+    async fn run_flatpak_with_progress<F>(
+        &self,
+        pkg_name: &str,
+        is_install: bool,
+        app_handle: &tauri::AppHandle,
+        on_progress: F,
+    ) -> (bool, String)
+    where
+        F: FnMut(ProgressEvent) + Send + 'static,
+    {
+        let real_id = pkg_name.trim_start_matches("flatpak:").to_string();
+        let args: Vec<String> = if is_install {
+            vec!["install".to_string(), "--noninteractive".to_string(), "--assumeyes".to_string(), real_id]
+        } else {
+            vec!["uninstall".to_string(), "--noninteractive".to_string(), "--assumeyes".to_string(), real_id]
+        };
+        let action = if is_install { "install" } else { "remove" };
+
+        let mut cmd = Command::new("flatpak");
+        cmd.args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => return (false, e.to_string()),
+        };
+
+        let stdout = child.stdout.take().expect("stdout not captured");
+        let stderr = child.stderr.take().expect("stderr not captured");
+
+        use std::sync::{Arc, Mutex};
+        let pkg_name_owned = pkg_name.to_string();
+        let action_owned = action.to_string();
+        let app_handle_clone = app_handle.clone();
+
+        // Wrap on_progress in Arc<Mutex> so both closures can share it
+        let on_progress = Arc::new(Mutex::new(on_progress));
+        let on_progress_stderr = Arc::clone(&on_progress);
+
+        let stdout_task = tokio::task::spawn_blocking(move || {
+            read_output_lines(stdout, |line| {
+                let event = parse_flatpak_progress(line, &pkg_name_owned, &action_owned);
+                if let Some(e) = event {
+                    if let Ok(mut cb) = on_progress.lock() { cb(e.clone()); }
+                    let _ = app_handle_clone.emit("package-progress", &e);
+                }
+            });
+        });
+
+        let pkg_name_stderr = pkg_name.to_string();
+        let action_stderr = action.to_string();
+        let app_handle_stderr = app_handle.clone();
+        let stderr_task = tokio::task::spawn_blocking(move || {
+            read_output_lines(stderr, |line| {
+                let event = parse_flatpak_progress(line, &pkg_name_stderr, &action_stderr);
+                if let Some(e) = event {
+                    if let Ok(mut cb) = on_progress_stderr.lock() { cb(e.clone()); }
+                    let _ = app_handle_stderr.emit("package-progress", &e);
+                }
+            });
+        });
+
+        let _ = tokio::join!(stdout_task, stderr_task);
+
+        let status = match child.wait() {
+            Ok(s) => s,
+            Err(e) => return (false, e.to_string()),
+        };
+        if status.success() {
+            let _ = app_handle.emit("package-progress", &ProgressEvent {
+                package_name: pkg_name.to_string(),
+                action: action.to_string(),
+                progress: 100,
+                status: "completed".to_string(),
+                message: "İşlem tamamlandı".to_string(),
+            });
+            (true, "Başarılı".to_string())
+        } else {
+            let _ = app_handle.emit("package-progress", &ProgressEvent {
+                package_name: pkg_name.to_string(),
+                action: action.to_string(),
+                progress: 0,
+                status: "error".to_string(),
+                message: "İşlem başarısız oldu".to_string(),
+            });
+            (false, "Başarısız".to_string())
+        }
     }
 
     pub fn check_for_updates(&mut self, update_repo: bool) -> (usize, Vec<String>, String) {
         let mut upgradable: Vec<String> = vec![];
         let mut error_msg = String::new();
 
-        if update_repo && self.pisi_available {
-            let _ = run_pisi_cmd(&["update-repo"]);
+        if update_repo && self.luppo_available {
+            let _ = run_luppo_cmd(&["update-repo"]);
         }
 
-        if self.pisi_available {
-            match Command::new("pisi").arg("list-upgrades").output() {
+        if self.luppo_available {
+            match Command::new("luppo").arg("list-upgrades").output() {
                 Ok(out) if out.status.success() => {
                     let text = String::from_utf8_lossy(&out.stdout);
                     for line in text.lines() {
@@ -523,8 +745,8 @@ impl PisiBackend {
     }
 
     pub fn update_repo(&self) -> bool {
-        if !self.pisi_available { return false; }
-        run_pisi_cmd(&["update-repo"]).0
+        if !self.luppo_available { return false; }
+        run_luppo_cmd(&["update-repo"]).0
     }
 }
 
@@ -566,12 +788,106 @@ pub fn find_icon(icon_name: &str) -> String {
     String::new()
 }
 
+pub fn extract_flatpak_developer(app_id: &str) -> String {
+    let lower = app_id.to_lowercase();
+    if lower.contains("mozilla") { return "Mozilla".into(); }
+    if lower.contains("discord") { return "Discord Inc.".into(); }
+    if lower.contains("spotify") { return "Spotify".into(); }
+    if lower.contains("valvesoftware") || lower.contains("steam") { return "Valve Software".into(); }
+    if lower.contains("videolan") || lower.contains("vlc") { return "VideoLAN".into(); }
+    if lower.contains("gimp") { return "GIMP Development Team".into(); }
+    if lower.contains("blender") { return "Blender Foundation".into(); }
+    if lower.contains("inkscape") { return "Inkscape Community".into(); }
+    if lower.contains("kde.") || lower.starts_with("org.kde") { return "KDE Community".into(); }
+    if lower.contains("gnome.") || lower.starts_with("org.gnome") { return "GNOME Project".into(); }
+    if lower.contains("telegram") { return "Telegram FZ-LLC".into(); }
+    if lower.contains("obsproject") { return "OBS Project".into(); }
+    if lower.contains("microsoft") || lower.contains("visualstudio") { return "Microsoft".into(); }
+    if lower.contains("jetbrains") { return "JetBrains".into(); }
+    if lower.contains("google") || lower.contains("chromium") { return "Google".into(); }
+    if lower.contains("libreoffice") || lower.contains("documentfoundation") { return "The Document Foundation".into(); }
+    if lower.contains("audacity") { return "Audacity Team".into(); }
+    if lower.contains("kodi") { return "XBMC Foundation".into(); }
+    if lower.contains("github") {
+        let parts: Vec<&str> = app_id.split('.').collect();
+        if parts.len() >= 3 && parts[1].eq_ignore_ascii_case("github") {
+            return capitalize(parts[2]);
+        }
+    }
+    if lower.contains("gitlab") {
+        let parts: Vec<&str> = app_id.split('.').collect();
+        if parts.len() >= 3 && parts[1].eq_ignore_ascii_case("gitlab") {
+            return capitalize(parts[2]);
+        }
+    }
+    let parts: Vec<&str> = app_id.split('.').collect();
+    if parts.len() >= 2 {
+        let vendor = parts[1];
+        if !vendor.is_empty() && vendor != "github" && vendor != "gitlab" {
+            return capitalize(vendor);
+        }
+    }
+    String::new()
+}
+
+fn search_appstream_icons(app_id: &str) -> Option<String> {
+    let roots = [
+        "/var/lib/flatpak/appstream",
+        "/usr/share/flatpak/appstream",
+    ];
+    let home = std::env::var("HOME").unwrap_or_default();
+    let user_root = format!("{}/.local/share/flatpak/appstream", home);
+
+    let mut all_roots: Vec<&str> = roots.to_vec();
+    if !home.is_empty() {
+        all_roots.push(&user_root);
+    }
+
+    for root in all_roots {
+        let root_path = Path::new(root);
+        if !root_path.exists() { continue; }
+        if let Ok(arch_entries) = std::fs::read_dir(root_path) {
+            for repo in arch_entries.flatten() {
+                let repo_path = repo.path();
+                if !repo_path.is_dir() { continue; }
+                if let Ok(sub_entries) = std::fs::read_dir(&repo_path) {
+                    for arch in sub_entries.flatten() {
+                        let arch_path = arch.path();
+                        if !arch_path.is_dir() { continue; }
+                        if let Ok(hash_entries) = std::fs::read_dir(&arch_path) {
+                            for hash in hash_entries.flatten() {
+                                let hash_path = hash.path();
+                                if !hash_path.is_dir() { continue; }
+                                for size in ["128x128", "64x64", "scalable", "256x256", "512x512"] {
+                                    let icons_dir = hash_path.join("icons").join(size);
+                                    for ext in [".png", ".svg", ".xpm", ".jpg"] {
+                                        let file = icons_dir.join(format!("{}{}", app_id, ext));
+                                        if file.exists() {
+                                            return Some(file.to_string_lossy().to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn find_flatpak_icon(app_id: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
     let dirs = [
-        "/var/lib/flatpak/exports/share/icons/hicolor/scalable/apps",
-        "/var/lib/flatpak/exports/share/icons/hicolor/256x256/apps",
-        "/var/lib/flatpak/exports/share/icons/hicolor/128x128/apps",
-        "/var/lib/flatpak/exports/share/icons/hicolor/64x64/apps",
+        "/var/lib/flatpak/exports/share/icons/hicolor/scalable/apps".to_string(),
+        "/var/lib/flatpak/exports/share/icons/hicolor/512x512/apps".to_string(),
+        "/var/lib/flatpak/exports/share/icons/hicolor/256x256/apps".to_string(),
+        "/var/lib/flatpak/exports/share/icons/hicolor/128x128/apps".to_string(),
+        "/var/lib/flatpak/exports/share/icons/hicolor/64x64/apps".to_string(),
+        format!("{}/.local/share/flatpak/exports/share/icons/hicolor/scalable/apps", home),
+        format!("{}/.local/share/flatpak/exports/share/icons/hicolor/128x128/apps", home),
+        format!("{}/.local/share/flatpak/exports/share/icons/hicolor/64x64/apps", home),
     ];
     for dir in &dirs {
         for ext in ICON_EXTENSIONS {
@@ -581,8 +897,19 @@ pub fn find_flatpak_icon(app_id: &str) -> String {
             }
         }
     }
+
+    if let Some(appstream_icon) = search_appstream_icons(app_id) {
+        return appstream_icon;
+    }
+
     let short = app_id.split('.').last().unwrap_or(app_id);
-    find_icon(short)
+    let sys_icon = find_icon(short);
+    if !sys_icon.is_empty() {
+        return sys_icon;
+    }
+
+    // Flathub online fallback URL
+    format!("https://dl.flathub.org/media/icons/128x128/{}.png", app_id)
 }
 
 pub fn map_to_category(name: &str, part_of: &str, summary: &str) -> String {
@@ -632,7 +959,7 @@ pub fn map_to_category(name: &str, part_of: &str, summary: &str) -> String {
     }
     // 9. System
     if ["system", "admin", "base", "kernel", "root", "driver", "security"].iter().any(|x| p.contains(x))
-        || ["htop", "neofetch", "gparted", "system", "kernel", "driver", "lupus", "pisi", "pisidi", "pisipi", "deb2pisi", "aerosky", "auratask", "boot", "grub", "systemd", "udev", "dbus", "util-linux", "coreutils", "desktop", "plasma", "gnome", "xfce", "kde", "qt", "gtk", "xorg", "wayland", "mesa", "nvidia", "amd", "intel", "vulkan", "firmware", "disk", "auth", "pam", "sudo"].iter().any(|x| n.contains(x)) {
+        || ["htop", "neofetch", "gparted", "system", "kernel", "driver", "lupus", "luppo", "luppo-driver-installer", "luppo-package-installer", "luppo-converter", "aerosky", "auratask", "boot", "grub", "systemd", "udev", "dbus", "util-linux", "coreutils", "desktop", "plasma", "gnome", "xfce", "kde", "qt", "gtk", "xorg", "wayland", "mesa", "nvidia", "amd", "intel", "vulkan", "firmware", "disk", "auth", "pam", "sudo"].iter().any(|x| n.contains(x)) {
         return "system".into();
     }
 
@@ -700,7 +1027,7 @@ fn detect_developer(name: &str, homepage: &str, component: &str) -> String {
     if u.contains("videolan.org") || n.contains("vlc") {
         return "VideoLAN Project".into();
     }
-    if n.contains("lupus") || n.contains("pisi") || n.contains("auratask") || n.contains("aerosky") {
+    if n.contains("lupus") || n.contains("luppo") || n.contains("auratask") || n.contains("aerosky") {
         return "Antolun".into();
     }
     if !homepage.is_empty() {
@@ -709,7 +1036,7 @@ fn detect_developer(name: &str, homepage: &str, component: &str) -> String {
             return clean_host.to_string();
         }
     }
-    "Pisi Linux Topluluğu".into()
+    "Bilinmeyen Geliştirici".into()
 }
 
 fn capitalize(s: &str) -> String {
@@ -720,12 +1047,12 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-fn run_pisi_cmd(args: &[&str]) -> (bool, String) {
+fn run_luppo_cmd(args: &[&str]) -> (bool, String) {
     let is_root = unsafe { libc::geteuid() == 0 };
     let output = if is_root {
-        Command::new("pisi").args(args).output()
+        Command::new("luppo").args(args).output()
     } else {
-        Command::new("pkexec").arg("pisi").args(args).output()
+        Command::new("pkexec").arg("luppo").args(args).output()
     };
     match output {
         Ok(out) => {
@@ -750,6 +1077,193 @@ fn run_flatpak_cmd(args: &[&str]) -> (bool, String) {
         }
         Err(e) => (false, e.to_string()),
     }
+}
+
+// ─── Progress Parsing & Realtime Stream Reading ────────────────────────────
+
+fn read_output_lines<R: std::io::Read>(mut reader: R, mut callback: impl FnMut(&str)) {
+    let mut buf = [0u8; 256];
+    let mut line_buf = Vec::new();
+    while let Ok(n) = reader.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        for &b in &buf[..n] {
+            if b == b'\n' || b == b'\r' {
+                if !line_buf.is_empty() {
+                    let s = String::from_utf8_lossy(&line_buf);
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() {
+                        callback(trimmed);
+                    }
+                    line_buf.clear();
+                }
+            } else {
+                line_buf.push(b);
+            }
+        }
+    }
+    if !line_buf.is_empty() {
+        let s = String::from_utf8_lossy(&line_buf);
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            callback(trimmed);
+        }
+    }
+}
+
+fn extract_percentage_or_ratio(line: &str) -> Option<u8> {
+    // 1. Check for percentage tokens (e.g. 45%, %45, [45%], (45%), 45.2%, etc.)
+    let words: Vec<&str> = line.split_whitespace().collect();
+    for (i, word) in words.iter().enumerate() {
+        let clean = word.trim_matches(|c: char| c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}' || c == ',' || c == ':');
+        
+        if clean.starts_with('%') {
+            let num_part = clean.trim_start_matches('%').trim_end_matches(|c: char| !c.is_ascii_digit() && c != '.');
+            if let Ok(val) = num_part.parse::<f32>() {
+                return Some(val.round().clamp(0.0, 100.0) as u8);
+            }
+        } else if clean.ends_with('%') {
+            let num_part = clean.trim_end_matches('%').trim_start_matches(|c: char| !c.is_ascii_digit() && c != '.');
+            if let Ok(val) = num_part.parse::<f32>() {
+                return Some(val.round().clamp(0.0, 100.0) as u8);
+            }
+        } else if *word == "%" && i > 0 {
+            let prev = words[i - 1].trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
+            if let Ok(val) = prev.parse::<f32>() {
+                return Some(val.round().clamp(0.0, 100.0) as u8);
+            }
+        } else if *word == "%" && i + 1 < words.len() {
+            let next = words[i + 1].trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
+            if let Ok(val) = next.parse::<f32>() {
+                return Some(val.round().clamp(0.0, 100.0) as u8);
+            }
+        }
+    }
+
+    // 2. Check for ratio: e.g. "12.4 MB / 25.0 MB" or "12.4M / 25.0M" or "12.4 / 25.0"
+    if let Some(slash_idx) = line.find('/') {
+        let before = &line[..slash_idx];
+        let after = &line[slash_idx + 1..];
+
+        let before_num = before.split_whitespace().rev().find_map(|w| {
+            let clean = w.trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
+            clean.parse::<f32>().ok()
+        });
+
+        let after_num = after.split_whitespace().find_map(|w| {
+            let clean = w.trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
+            clean.parse::<f32>().ok()
+        });
+
+        if let (Some(cur), Some(tot)) = (before_num, after_num) {
+            if tot > 0.0 && cur <= tot {
+                let pct = ((cur / tot) * 100.0).round().clamp(0.0, 100.0) as u8;
+                return Some(pct);
+            }
+        }
+    }
+
+    // 3. Step counts e.g. [1/4]
+    for part in line.split(|c| c == '[' || c == ']' || c == '(' || c == ')') {
+        let part = part.trim();
+        if let Some(slash) = part.find('/') {
+            let cur_s = part[..slash].trim();
+            let tot_s = part[slash + 1..].trim();
+            if let (Ok(cur), Ok(tot)) = (cur_s.parse::<f32>(), tot_s.parse::<f32>()) {
+                if tot > 0.0 && cur <= tot {
+                    let pct = ((cur / tot) * 100.0).round().clamp(0.0, 100.0) as u8;
+                    return Some(pct);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn parse_luppo_progress(line: &str, pkg_name: &str, action: &str) -> Option<ProgressEvent> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+
+    let lower = line.to_lowercase();
+    let parsed_progress = extract_percentage_or_ratio(line);
+
+    let (progress, status) = if let Some(p) = parsed_progress {
+        let st = if p >= 100 {
+            "completed"
+        } else if lower.contains("kurul") || lower.contains("install") {
+            "installing"
+        } else if lower.contains("yapılandır") || lower.contains("configur") {
+            "configuring"
+        } else {
+            "downloading"
+        };
+        (p, st)
+    } else if lower.contains("tamamlandı") || lower.contains("complete") || lower.contains("başarılı") {
+        (100, "completed")
+    } else if lower.contains("yapılandır") || lower.contains("configur") {
+        (90, "configuring")
+    } else if lower.contains("kurul") || lower.contains("install") {
+        (70, "installing")
+    } else if lower.contains("paketler açılıyor") || lower.contains("extract") || lower.contains("unpack") {
+        (50, "extracting")
+    } else if lower.contains("indir") || lower.contains("download") || lower.contains("alınıyor") {
+        (15, "downloading")
+    } else if lower.contains("kaldır") || lower.contains("remove") || lower.contains("uninstall") {
+        (50, "removing")
+    } else {
+        return None;
+    };
+
+    Some(ProgressEvent {
+        package_name: pkg_name.to_string(),
+        action: action.to_string(),
+        progress,
+        status: status.to_string(),
+        message: line.to_string(),
+    })
+}
+
+fn parse_flatpak_progress(line: &str, pkg_name: &str, action: &str) -> Option<ProgressEvent> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+
+    let lower = line.to_lowercase();
+    let parsed_progress = extract_percentage_or_ratio(line);
+
+    let (progress, status) = if let Some(p) = parsed_progress {
+        let st = if p >= 100 {
+            "completed"
+        } else if lower.contains("install") || lower.contains("kur") {
+            "installing"
+        } else {
+            "downloading"
+        };
+        (p, st)
+    } else if lower.contains("complete") || lower.contains("tamamlandı") {
+        (100, "completed")
+    } else if lower.contains("install") || lower.contains("kurul") {
+        (75, "installing")
+    } else if lower.contains("download") || lower.contains("indir") {
+        (20, "downloading")
+    } else if lower.contains("uninstall") || lower.contains("kaldır") {
+        (50, "removing")
+    } else {
+        return None;
+    };
+
+    Some(ProgressEvent {
+        package_name: pkg_name.to_string(),
+        action: action.to_string(),
+        progress,
+        status: status.to_string(),
+        message: line.to_string(),
+    })
 }
 
 extern "C" {

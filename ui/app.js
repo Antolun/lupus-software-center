@@ -1,4 +1,4 @@
-/* PiSiM – Tauri Frontend Logic (Vanilla JS)
+/* LupuS Software Center – Tauri Frontend Logic (Vanilla JS)
    PyQt6 mainwindow.py & widgets.py mantığı ile %100 birebir entegre */
 
 // ── IPC Helpers ──
@@ -21,6 +21,33 @@ const invoke = async (cmd, args = {}) => {
   return [];
 };
 
+// ── Refresh packages from backend ──
+async function refreshPackages() {
+  try {
+    const pkgs = await invoke('get_available_packages');
+    allPackages = pkgs || [];
+    
+    // Also refresh sidebar categories to update badge count
+    const cats = await invoke('get_categories');
+    renderSidebarCategories(cats);
+    
+    // Refresh current view if on updates/installed page
+    if (currentCategory === 'updates' || currentCategory === 'all') {
+      renderInstalledView();
+    }
+    // Refresh discover view if on discover page
+    if (currentCategory === 'all') {
+      renderDiscoverView();
+    }
+    // Refresh category view if on a category page
+    if (currentCategory !== 'all' && currentCategory !== 'updates' && currentCategory !== 'settings' && currentCategory !== 'about') {
+      renderCategoryView(currentCategory);
+    }
+  } catch (err) {
+    console.error('Failed to refresh packages:', err);
+  }
+}
+
 // ── State ──
 let allPackages = [];
 let categories = [];
@@ -28,11 +55,11 @@ let currentCategory = 'all';
 let historyStack = [];
 let currentLanguage = 'tr';
 let activeWorkers = new Map(); // pkgName -> { action, progress }
+let currentDetailPkg = null;   // currently open detail page package name
 let searchDebounceTimer = null;
-
-// ── i18n Dictionary ──
 const i18n = {
   en: {
+    software_center: "Software Center",
     nav_discover: "All Applications",
     nav_development: "Development",
     nav_education: "Education",
@@ -44,8 +71,7 @@ const i18n = {
     nav_office: "Office",
     nav_system: "System",
     nav_utilities: "Utilities",
-    nav_flatpak: "Flatpak",
-    nav_updates: "Updates",
+    nav_downloads: "Downloads",
     nav_settings: "Settings",
     nav_about: "About",
     all_applications: "All Applications",
@@ -69,8 +95,6 @@ const i18n = {
     btn_check_updates: "Check for Updates",
     updating_repo: "Updating...",
     checking_updates: "Checking...",
-    hero_subtitle: "LUPUS iDEVICE MOUNTER",
-    hero_title: "Discover easy access to\nApple devices!",
     rating: "Rating",
     downloads: "Downloads",
     size: "Size",
@@ -84,7 +108,7 @@ const i18n = {
     repo_origin: "Repository / Origin",
     developer: "Developer",
     flatpak_pkg: "Flatpak Package",
-    pisi_pkg: "PiSi Package",
+    luppo_pkg: "Luppo Package",
     lupus_main_repo: "Main Repository",
     lupus_community: "Antolun",
     flathub_community: "FlatHub",
@@ -93,25 +117,25 @@ const i18n = {
     update_date: "Last Update Date",
     homepage: "Website",
     vcs_url: "Source Code",
-    no_description: "PiSi package description not available.",
+    no_description: "Luppo package description not available.",
     no_packages_in_category: "No packages found in this category.",
     no_updates_installed: "All your applications are up to date.",
     loading_flathub: "Description loading from FlatHub...",
     downloads_and_updates: "Downloads & Updates ({count})",
-    updates_badge: "Updates ({count})",
-    updates_title: "Updates",
+    updates_badge: "Downloads ({count})",
+    updates_title: "Downloads",
     update_check_dialog: "Update Check",
     updates_found_msg: "Found updates for {count} applications!",
     system_up_to_date_msg: "Your system is up to date! No updates found.",
     repo_update_dialog: "Repository Update",
-    repo_update_success: "PiSi repositories updated successfully!",
+    repo_update_success: "Luppo repositories updated successfully!",
     repo_update_error_title: "Repository Update Error",
     repo_update_error_msg: "Error updating repository:\n{message}",
     zoom_in: "Zoom In",
     zoom_out: "Zoom Out",
     reset: "Reset",
     close: "Close",
-    loading_app_title: "PiSiM",
+    loading_app_title: "LupuS Software Center",
     loading_init: "Starting…",
     loading_prep: "Preparing application…",
     loading_check_installed: "Checking installed packages…",
@@ -124,7 +148,7 @@ const i18n = {
     settings_title: "Settings",
     settings_section_general: "General & Startup",
     settings_autostart: "Run on System Boot",
-    settings_autostart_desc: "Automatically start PiSiM in background when system boots",
+    settings_autostart_desc: "Automatically start LupuS Software Center in background when system boots",
     settings_close_to_tray: "Run in Background When Closed",
     settings_close_to_tray_desc: "Hide application window to system tray when pressing close button",
     settings_section_updates: "Update Checker Settings",
@@ -138,18 +162,19 @@ const i18n = {
     interval_4h: "Every 4 Hours",
     interval_12h: "Every 12 Hours",
     interval_24h: "Daily (Every 24 Hours)",
-    tray_open_app: "Open PiSiM",
+    tray_open_app: "Open",
     tray_check_updates: "Check for Updates",
     tray_exit: "Exit",
-    about_title: "About PiSiM",
-    about_app_name: "PiSiM - PiSi Market",
-    about_version: "Version 2.0.0",
+    about_title: "About",
+    about_app_name: "LupuS Software Center - Luppo Market",
+    about_version: "Version 2.0.1",
     about_description: "Modern package manager and application store for LupuS.",
     about_developer: "Developed by Antolun",
     about_website: "Visit Website",
     about_license: "License: GNU General Public License v3.0",
   },
   tr: {
+    software_center: "Yazılım Merkezi",
     nav_discover: "Tüm Uygulamalar",
     nav_development: "Geliştirme",
     nav_education: "Eğitim",
@@ -162,7 +187,7 @@ const i18n = {
     nav_system: "Sistem",
     nav_utilities: "Araçlar",
     nav_flatpak: "Flatpak",
-    nav_updates: "Güncellemeler",
+    nav_downloads: "İndirmeler",
     nav_settings: "Ayarlar",
     nav_about: "Hakkında",
     all_applications: "Tüm Uygulamalar",
@@ -186,8 +211,6 @@ const i18n = {
     btn_check_updates: "Güncellemeleri Denetle",
     updating_repo: "Güncelleniyor...",
     checking_updates: "Denetleniyor...",
-    hero_subtitle: "LUPUS iDEVICE MOUNTER",
-    hero_title: "Apple cihazlarına kolay\nerişimi keşfedin!",
     rating: "Puanlama",
     downloads: "İndirme",
     size: "Boyut",
@@ -201,7 +224,7 @@ const i18n = {
     repo_origin: "Depo / Kaynak",
     developer: "Geliştirici",
     flatpak_pkg: "Flatpak Paketi",
-    pisi_pkg: "PiSi Paketi",
+    luppo_pkg: "Luppo Paketi",
     lupus_main_repo: "Ana Depo",
     lupus_community: "Antolun",
     flathub_community: "FlatHub",
@@ -210,25 +233,25 @@ const i18n = {
     update_date: "Son Güncelleme",
     homepage: "Web Sitesi",
     vcs_url: "Kaynak Kod Deposu",
-    no_description: "PiSi paket açıklaması mevcut değil.",
+    no_description: "Luppo paket açıklaması mevcut değil.",
     no_packages_in_category: "Bu kategoride henüz paket bulunmuyor.",
     no_updates_installed: "Tüm uygulamalarınız güncel.",
     loading_flathub: "Açıklama FlatHub'dan yükleniyor...",
     downloads_and_updates: "İndirilenler & Güncellemeler ({count})",
-    updates_badge: "Güncellemeler ({count})",
-    updates_title: "Güncellemeler",
+    updates_badge: "İndirmeler ({count})",
+    updates_title: "İndirmeler",
     update_check_dialog: "Güncelleme Kontrolü",
     updates_found_msg: "{count} adet uygulama için güncelleme bulundu!",
     system_up_to_date_msg: "Sisteminiz güncel! Herhangi bir güncelleme bulunamadı.",
     repo_update_dialog: "Depo Güncelleme",
-    repo_update_success: "PiSi depoları başarıyla güncellendi!",
+    repo_update_success: "Luppo depoları başarıyla güncellendi!",
     repo_update_error_title: "Depo Güncelleme Hatası",
     repo_update_error_msg: "Depo güncellenirken bir hata oluştu:\n{message}",
     zoom_in: "Büyüt",
     zoom_out: "Küçült",
     reset: "Sıfırla",
     close: "Kapat",
-    loading_app_title: "PiSiM",
+    loading_app_title: "LupuS Software Center",
     loading_init: "Başlatılıyor…",
     loading_prep: "Uygulama hazırlanıyor…",
     loading_check_installed: "Kurulu paketler kontrol ediliyor…",
@@ -241,7 +264,7 @@ const i18n = {
     settings_title: "Ayarlar",
     settings_section_general: "Genel ve Başlangıç",
     settings_autostart: "Sistem Açılışında Başlat",
-    settings_autostart_desc: "Sistem açıldığında PiSiM arka planda otomatik olarak çalışır",
+    settings_autostart_desc: "Sistem açıldığında LupuS Software Center arka planda otomatik olarak çalışır",
     settings_close_to_tray: "Kapatıldığında Arka Planda Çalış",
     settings_close_to_tray_desc: "Kapat butonuna basıldığında uygulamayı görev çubuğu tepsisine küçültür",
     settings_section_updates: "Güncelleme Denetleyici Ayarları",
@@ -255,12 +278,12 @@ const i18n = {
     interval_4h: "Her 4 Saatte Bir",
     interval_12h: "Her 12 Saatte Bir",
     interval_24h: "Günde Bir (24 Saat)",
-    tray_open_app: "PiSiM'i Aç",
+    tray_open_app: "Aç",
     tray_check_updates: "Güncellemeleri Denetle",
     tray_exit: "Çıkış",
-    about_title: "PiSiM Hakkında",
-    about_app_name: "PiSiM - PiSi Market",
-    about_version: "Sürüm 2.0.0",
+    about_title: "Hakkında",
+    about_app_name: "LupuS Software Center - Luppo Market",
+    about_version: "Sürüm 2.0.1",
     about_description: "LupuS için modern paket yöneticisi ve uygulama mağazası.",
     about_developer: "Antolun tarafından geliştirilmiştir",
     about_website: "Web Sitesini Ziyaret Et",
@@ -274,6 +297,16 @@ function tr(key, params = {}) {
     str = str.replace(`{${k}}`, params[k]);
   }
   return str;
+}
+
+function formatCategoryName(cat) {
+  if (!cat) return '';
+  const key = cat.toLowerCase().trim();
+  const trVal = tr(`nav_${key}`);
+  if (trVal && trVal !== `nav_${key}`) {
+    return trVal;
+  }
+  return cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase();
 }
 
 function updateUiLanguage() {
@@ -309,13 +342,38 @@ function getCategoryIconPath(catId) {
   return `assets/icons/${iconName}.svg`;
 }
 
-function getAppIconSrc(iconPath, isFlatpak) {
-  // Backend artık data: URI döndürüyor, direkt kullan
+function getAppIconSrc(iconPath, isFlatpak, pkgName) {
   if (iconPath && iconPath.length > 0) {
     return iconPath;
   }
-  // İkon yoksa paket tipine göre varsayılan
-  return isFlatpak ? 'assets/icons/package-x-generic.svg' : 'assets/pisi.png';
+  if (isFlatpak && pkgName) {
+    const realId = pkgName.replace(/^flatpak:/, '');
+    return `https://dl.flathub.org/media/icons/128x128/${realId}.png`;
+  }
+  return isFlatpak ? 'assets/icons/package-x-generic.svg' : 'assets/luppo.png';
+}
+
+function handleIconError(imgEl, isFlatpak, pkgName) {
+  if (isFlatpak && pkgName) {
+    const realId = pkgName.replace(/^flatpak:/, '');
+    const cdnUrl1 = `https://dl.flathub.org/media/icons/128x128/${realId}.png`;
+    const cdnUrl2 = `https://dl.flathub.org/repo/appstream/x86_64/icons/128x128/${realId}.png`;
+    
+    const tried1 = imgEl.getAttribute('data-tried-flathub1') === 'true';
+    const tried2 = imgEl.getAttribute('data-tried-flathub2') === 'true';
+
+    if (!tried1 && imgEl.src !== cdnUrl1) {
+      imgEl.setAttribute('data-tried-flathub1', 'true');
+      imgEl.src = cdnUrl1;
+      return;
+    }
+    if (!tried2 && imgEl.src !== cdnUrl2) {
+      imgEl.setAttribute('data-tried-flathub2', 'true');
+      imgEl.src = cdnUrl2;
+      return;
+    }
+  }
+  imgEl.src = isFlatpak ? 'assets/icons/package-x-generic.svg' : 'assets/lupus-software-center.png';
 }
 
 // ── Navigation & View Switching ──
@@ -360,13 +418,13 @@ function createCardElement(pkg, rank = null, showDelete = true) {
 
   let rankHtml = rank ? `<div class="card-rank">${rank}</div>` : '';
   let badgeHtml = pkg.is_flatpak ? `<span class="flatpak-badge">${pkg.origin || 'Flatpak'}</span>` : '';
-  let iconSrc = getAppIconSrc(pkg.icon_path, pkg.is_flatpak);
+  let iconSrc = getAppIconSrc(pkg.icon_path, pkg.is_flatpak, pkg.name);
 
   const summaryStr = pkg.summary ? (pkg.summary.length > 55 ? pkg.summary.substring(0, 55) + '…' : pkg.summary) : (pkg.category || 'Uygulama');
 
   card.innerHTML = `
     ${rankHtml}
-    <img class="card-icon" src="${iconSrc}" loading="lazy" decoding="async" onerror="this.src='${pkg.is_flatpak ? 'assets/icons/package-x-generic.svg' : 'assets/pisim.png'}'" alt="${pkg.display_name}">
+    <img class="card-icon" src="${iconSrc}" loading="lazy" decoding="async" onerror="handleIconError(this, ${pkg.is_flatpak ? 'true' : 'false'}, '${pkg.name}')" alt="${pkg.display_name}">
     <div class="card-info">
       <div class="card-title-row">
         <span class="card-name">${pkg.display_name || pkg.name}</span>
@@ -395,6 +453,7 @@ function renderInstallWidget(container, pkg, showDelete = true) {
 
   if (activeWorkers.has(pkg.name)) {
     const worker = activeWorkers.get(pkg.name);
+    const statusText = worker.message || (worker.status === 'downloading' ? 'İndiriliyor...' : worker.status === 'installing' ? 'Kuruluyor...' : worker.status === 'configuring' ? 'Yapılandırılıyor...' : 'İşleniyor...');
     container.innerHTML = `
       <div class="progress-wrap">
         <div class="progress-bar-bg">
@@ -437,70 +496,44 @@ function renderInstallWidget(container, pkg, showDelete = true) {
 
 // ── Actions: Install / Remove ──
 async function startInstall(pkgName) {
-  activeWorkers.set(pkgName, { action: 'install', progress: 10 });
+  activeWorkers.set(pkgName, { action: 'install', progress: 0, status: 'starting', message: 'Başlatılıyor...' });
   refreshAllWidgets(pkgName);
-
-  let p = 10;
-  const timer = setInterval(() => {
-    p = Math.min(p + 15, 90);
-    if (activeWorkers.has(pkgName)) {
-      activeWorkers.get(pkgName).progress = p;
-      refreshAllWidgets(pkgName);
-    } else {
-      clearInterval(timer);
-    }
-  }, 300);
 
   try {
     const res = await invoke('install_package', { packageName: pkgName });
-    clearInterval(timer);
     activeWorkers.delete(pkgName);
 
     if (res && res.success) {
-      const pkg = allPackages.find(x => x.name === pkgName);
-      if (pkg) {
-        pkg.installed = true;
-        pkg.has_update = false;
+      if (currentDetailPkg && currentDetailPkg.name === pkgName) {
+        currentDetailPkg.installed = true;
+        currentDetailPkg.has_update = false;
       }
+      await refreshPackages();
     }
     refreshAllWidgets(pkgName);
   } catch (err) {
-    clearInterval(timer);
     activeWorkers.delete(pkgName);
     refreshAllWidgets(pkgName);
   }
 }
 
 async function startRemove(pkgName) {
-  activeWorkers.set(pkgName, { action: 'remove', progress: 10 });
+  activeWorkers.set(pkgName, { action: 'remove', progress: 0, status: 'starting', message: 'Başlatılıyor...' });
   refreshAllWidgets(pkgName);
-
-  let p = 10;
-  const timer = setInterval(() => {
-    p = Math.min(p + 20, 90);
-    if (activeWorkers.has(pkgName)) {
-      activeWorkers.get(pkgName).progress = p;
-      refreshAllWidgets(pkgName);
-    } else {
-      clearInterval(timer);
-    }
-  }, 250);
 
   try {
     const res = await invoke('remove_package', { packageName: pkgName });
-    clearInterval(timer);
     activeWorkers.delete(pkgName);
 
     if (res && res.success) {
-      const pkg = allPackages.find(x => x.name === pkgName);
-      if (pkg) {
-        pkg.installed = false;
-        pkg.has_update = false;
+      if (currentDetailPkg && currentDetailPkg.name === pkgName) {
+        currentDetailPkg.installed = false;
+        currentDetailPkg.has_update = false;
       }
+      await refreshPackages();
     }
     refreshAllWidgets(pkgName);
   } catch (err) {
-    clearInterval(timer);
     activeWorkers.delete(pkgName);
     refreshAllWidgets(pkgName);
   }
@@ -512,28 +545,39 @@ function cancelWorker(pkgName) {
 }
 
 function refreshAllWidgets(pkgName) {
+  // Update card widgets
   document.querySelectorAll(`.install-widget[data-pkg="${pkgName}"]`).forEach(container => {
     const pkg = allPackages.find(x => x.name === pkgName);
     if (pkg) {
       renderInstallWidget(container, pkg, true);
     }
   });
+
+  // Update detail view widget
   const detailContainer = document.getElementById('detail-install-container');
-  const currentDetailName = document.getElementById('detail-name')?.textContent;
-  const pkg = allPackages.find(x => x.name === pkgName);
-  if (pkg && (pkg.name === currentDetailName || pkg.display_name === currentDetailName)) {
-    renderInstallWidget(detailContainer, pkg, true);
+  if (detailContainer && currentDetailPkg && (currentDetailPkg.name === pkgName || currentDetailPkg === pkgName)) {
+    const pkg = allPackages.find(x => x.name === pkgName) || (typeof currentDetailPkg === 'object' ? currentDetailPkg : null);
+    if (pkg) {
+      currentDetailPkg = pkg;
+      renderInstallWidget(detailContainer, pkg, true);
+    }
+  }
+
+  // Also refresh updates view if currently on updates page to show downloading packages
+  if (currentCategory === 'updates') {
+    renderInstalledView();
   }
 }
 
 // ── Detail View ──
 async function openAppDetail(pkg) {
+  currentDetailPkg = allPackages.find(x => x.name === pkg.name) || pkg;
   const detailIconEl = document.getElementById('detail-icon');
-  detailIconEl.src = getAppIconSrc(pkg.icon_path, pkg.is_flatpak);
-  detailIconEl.onerror = () => { detailIconEl.src = pkg.is_flatpak ? 'assets/icons/package-x-generic.svg' : 'assets/pisim.png'; };
+  detailIconEl.src = getAppIconSrc(pkg.icon_path, pkg.is_flatpak, pkg.name);
+  detailIconEl.onerror = () => handleIconError(detailIconEl, pkg.is_flatpak, pkg.name);
   document.getElementById('detail-name').textContent = pkg.display_name || pkg.name;
   document.getElementById('detail-summary').textContent = pkg.summary || '';
-  document.getElementById('detail-category').textContent = (pkg.category || '').toUpperCase();
+  document.getElementById('detail-category').textContent = formatCategoryName(pkg.category);
   document.getElementById('detail-description').textContent = pkg.description || pkg.summary || tr('no_description');
 
   const badge = document.getElementById('detail-flatpak-badge');
@@ -552,7 +596,7 @@ async function openAppDetail(pkg) {
 
   // Render Install Widget in Detail
   const widgetWrap = document.getElementById('detail-install-container');
-  renderInstallWidget(widgetWrap, pkg, true);
+  renderInstallWidget(widgetWrap, currentDetailPkg, true);
 
   // Gallery
   const gallery = document.getElementById('detail-gallery');
@@ -565,9 +609,9 @@ async function openAppDetail(pkg) {
     const metas = [
       [tr('version'), p.version || '1.0.0'],
       [tr('license'), p.license || 'GPL'],
-      [tr('type'), p.is_flatpak ? tr('flatpak_pkg') : tr('pisi_pkg')],
+      [tr('type'), p.is_flatpak ? tr('flatpak_pkg') : tr('luppo_pkg')],
       [tr('repo_origin'), p.origin || tr('lupus_main_repo')],
-      [tr('category'), (p.category || 'Utilities').toUpperCase()],
+      [tr('category'), formatCategoryName(p.category || 'Utilities')],
       [tr('developer'), p.developer || tr('unknown_developer')],
     ];
     if (p.download_size) metas.push([tr('download_size'), p.download_size]);
@@ -583,14 +627,14 @@ async function openAppDetail(pkg) {
 
   updateMetadataGrid(pkg);
 
-  // Fetch enriched details from backend (PiSi CLI info)
+  // Fetch enriched details from backend (Luppo CLI info)
   if (!pkg.is_flatpak) {
     try {
       const enriched = await invoke('get_package_details', { packageName: pkg.name });
       if (enriched) {
         if (enriched.summary) document.getElementById('detail-summary').textContent = enriched.summary;
         if (enriched.description) document.getElementById('detail-description').textContent = enriched.description;
-        if (enriched.category) document.getElementById('detail-category').textContent = enriched.category.toUpperCase();
+        if (enriched.category) document.getElementById('detail-category').textContent = formatCategoryName(enriched.category);
         if (enriched.installed_size || enriched.download_size) {
           document.getElementById('stat-size').textContent = enriched.installed_size || enriched.download_size;
         }
@@ -603,9 +647,28 @@ async function openAppDetail(pkg) {
     try {
       const flathubData = await invoke('get_flatpak_info', { appId: pkg.name });
       if (flathubData) {
+        if (flathubData.developer_name) {
+          pkg.developer = flathubData.developer_name;
+        } else if (flathubData.developer && flathubData.developer.name) {
+          pkg.developer = flathubData.developer.name;
+        }
+        if (flathubData.project_license) {
+          pkg.license = flathubData.project_license;
+        }
+        if (flathubData.summary) {
+          document.getElementById('detail-summary').textContent = flathubData.summary;
+        }
         if (flathubData.description) {
           document.getElementById('detail-description').textContent = flathubData.description.replace(/<[^>]+>/g, '').trim();
         }
+        if (flathubData.icon) {
+          const currentSrc = detailIconEl.src;
+          if (!currentSrc || currentSrc.includes('package-x-generic') || currentSrc.includes('flathub.org')) {
+            detailIconEl.src = flathubData.icon;
+          }
+        }
+        updateMetadataGrid(pkg);
+
         if (flathubData.screenshots && flathubData.screenshots.length > 0) {
           gallery.innerHTML = '';
           flathubData.screenshots.slice(0, 4).forEach(sc => {
@@ -677,7 +740,7 @@ function renderCategoryView(catId) {
   const catTitleEl = document.getElementById('cat-header-title');
   const catIconEl = document.getElementById('cat-header-icon');
   catIconEl.src = getCategoryIconPath(catId);
-  catTitleEl.textContent = tr(`nav_${catId}`) || catId.toUpperCase();
+  catTitleEl.textContent = formatCategoryName(catId);
 
   const grid = document.getElementById('category-grid');
   grid.innerHTML = '';
@@ -703,12 +766,19 @@ function renderInstalledView() {
   updatesGrid.innerHTML = '';
 
   const updates = allPackages.filter(p => p.has_update);
-  document.getElementById('updates-section-title').textContent = tr('downloads_and_updates', { count: updates.length });
+  
+  // Also include packages currently being downloaded/installed
+  const downloading = Array.from(activeWorkers.keys())
+    .map(name => allPackages.find(p => p.name === name))
+    .filter(p => p && !p.has_update); // Avoid duplicates if already in updates
+  
+  const allUpdatesAndDownloads = [...updates, ...downloading];
+  document.getElementById('updates-section-title').textContent = tr('downloads_and_updates', { count: allUpdatesAndDownloads.length });
 
-  if (updates.length === 0) {
+  if (allUpdatesAndDownloads.length === 0) {
     updatesGrid.innerHTML = `<div style="grid-column: 1 / -1; padding: 16px; color: var(--text-secondary); font-size: 13px;">${tr('no_updates_installed')}</div>`;
   } else {
-    updates.forEach(pkg => {
+    allUpdatesAndDownloads.forEach(pkg => {
       updatesGrid.appendChild(createCardElement(pkg, null, true));
     });
   }
@@ -978,7 +1048,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         alert(tr('system_up_to_date_msg'));
       }
-      renderInstalledView();
+      await refreshPackages();
     } catch (e) {
       alert(tr('error_occurred') + ': ' + e);
     }
@@ -986,19 +1056,17 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.textContent = tr('btn_check_updates');
   });
 
-  // Backend events (updates-checked / tray-check-updates)
+  // Backend events (updates-checked / tray-check-updates / package-progress)
   const listen = (event, handler) => {
     if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.listen) {
       window.__TAURI__.event.listen(event, (e) => handler(e.payload));
     }
   };
 
-  listen('updates-checked', (payload) => {
+  listen('updates-checked', async (payload) => {
     if (payload && typeof payload.count === 'number') {
       updateSidebarUpdatesBadge(payload.count);
-      if (currentCategory === 'updates') {
-        renderInstalledView();
-      }
+      await refreshPackages();
     }
   });
 
@@ -1006,11 +1074,28 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await invoke('check_for_updates', { updateRepo: false });
       updateSidebarUpdatesBadge(res.count);
-      if (currentCategory === 'updates') {
-        renderInstalledView();
-      }
+      await refreshPackages();
     } catch (e) {
       console.error('Tray update check failed:', e);
+    }
+  });
+
+  // Listen for real-time package progress events
+  listen('package-progress', (payload) => {
+    if (payload && payload.package_name) {
+      const { package_name, progress, status, message } = payload;
+      if (status === 'completed' || status === 'error') {
+        activeWorkers.delete(package_name);
+        refreshAllWidgets(package_name);
+      } else if (activeWorkers.has(package_name)) {
+        activeWorkers.set(package_name, {
+          ...activeWorkers.get(package_name),
+          progress: progress || 0,
+          status: status || 'unknown',
+          message: message || ''
+        });
+        refreshAllWidgets(package_name);
+      }
     }
   });
 });

@@ -9,7 +9,7 @@ run:
 	cd src-tauri && cargo run
 
 package: build
-	./build-pisi.sh
+	./build-luppo.sh
 
 clean:
 	cd src-tauri && cargo clean

@@ -1,4 +1,4 @@
-/* PiSiM - PiSi Market UI Styles (Tauri Edition)
+/* LupuS Software Center - Luppo Market UI Styles (Tauri Edition)
    PyQt6 Arayüzü ile %100 Birebir Aynı Tasarım & Renk Paleti (Plasma Breeze İkonları) */
 
 :root {
@@ -521,7 +521,7 @@ body {
   text-overflow: ellipsis;
 }
 
-/* ── Install Widget (PisiInstallWidget) ── */
+/* ── Install Widget (LuppoInstallWidget) ── */
 .install-widget {
   width: auto;
   display: flex;
