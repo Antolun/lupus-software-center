@@ -66,17 +66,31 @@ pub struct PackageInfo {
     pub vcs_url: String,
 }
 
+/// Luppo paket isimlerindeki '-' işaretlerini boşluk ile değiştirir ve her kelimenin ilk harfini büyük yapar.
+/// Örnek: "luppo-package-installer" -> "Luppo Package Installer"
+pub fn format_luppo_display_name(name: &str) -> String {
+    if name.is_empty() {
+        return String::new();
+    }
+    name.split('-')
+        .filter(|w| !w.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    let upper_first: String = first.to_uppercase().collect();
+                    upper_first + chars.as_str()
+                }
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
 impl PackageInfo {
     pub fn new(name: &str) -> Self {
-        let display = if name.chars().all(|c| c.is_lowercase() || c.is_numeric() || c == '-' || c == '_') {
-            let mut s = name.to_string();
-            if let Some(r) = s.get_mut(0..1) {
-                r.make_ascii_uppercase();
-            }
-            s
-        } else {
-            name.to_string()
-        };
+        let display = format_luppo_display_name(name);
         Self {
             name: name.to_string(),
             display_name: display,
@@ -1274,3 +1288,34 @@ mod libc {
         super::geteuid()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_luppo_display_name() {
+        assert_eq!(format_luppo_display_name("luppo-package-installer"), "Luppo Package Installer");
+        assert_eq!(format_luppo_display_name("luppo-driver-installer"), "Luppo Driver Installer");
+        assert_eq!(format_luppo_display_name("luppo-converter"), "Luppo Converter");
+        assert_eq!(format_luppo_display_name("plasma-desktop"), "Plasma Desktop");
+        assert_eq!(format_luppo_display_name("gnome-calculator"), "Gnome Calculator");
+        assert_eq!(format_luppo_display_name("visual-studio-code"), "Visual Studio Code");
+        assert_eq!(format_luppo_display_name("vlc"), "Vlc");
+        assert_eq!(format_luppo_display_name("gparted"), "Gparted");
+        assert_eq!(format_luppo_display_name("aerosky"), "Aerosky");
+        assert_eq!(format_luppo_display_name("7-zip"), "7 Zip");
+        assert_eq!(format_luppo_display_name(""), "");
+        assert_eq!(format_luppo_display_name("---"), "");
+        assert_eq!(format_luppo_display_name("-foo-bar-"), "Foo Bar");
+    }
+
+    #[test]
+    fn test_package_info_new() {
+        let pkg = PackageInfo::new("luppo-package-installer");
+        assert_eq!(pkg.name, "luppo-package-installer");
+        assert_eq!(pkg.display_name, "Luppo Package Installer");
+        assert_eq!(pkg.origin, "Luppo");
+    }
+}
+

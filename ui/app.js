@@ -410,6 +410,18 @@ function goBack() {
   }
 }
 
+// ── Format Package Display Name ──
+function formatPackageDisplayName(pkg) {
+  if (!pkg) return '';
+  if (pkg.display_name) return pkg.display_name;
+  if (!pkg.name) return '';
+  return pkg.name
+    .split('-')
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 // ── Render Card Component ──
 function createCardElement(pkg, rank = null, showDelete = true) {
   const card = document.createElement('div');
@@ -419,15 +431,16 @@ function createCardElement(pkg, rank = null, showDelete = true) {
   let rankHtml = rank ? `<div class="card-rank">${rank}</div>` : '';
   let badgeHtml = pkg.is_flatpak ? `<span class="flatpak-badge">${pkg.origin || 'Flatpak'}</span>` : '';
   let iconSrc = getAppIconSrc(pkg.icon_path, pkg.is_flatpak, pkg.name);
+  const displayName = formatPackageDisplayName(pkg);
 
   const summaryStr = pkg.summary ? (pkg.summary.length > 55 ? pkg.summary.substring(0, 55) + '…' : pkg.summary) : (pkg.category || 'Uygulama');
 
   card.innerHTML = `
     ${rankHtml}
-    <img class="card-icon" src="${iconSrc}" loading="lazy" decoding="async" onerror="handleIconError(this, ${pkg.is_flatpak ? 'true' : 'false'}, '${pkg.name}')" alt="${pkg.display_name}">
+    <img class="card-icon" src="${iconSrc}" loading="lazy" decoding="async" onerror="handleIconError(this, ${pkg.is_flatpak ? 'true' : 'false'}, '${pkg.name}')" alt="${displayName}">
     <div class="card-info">
       <div class="card-title-row">
-        <span class="card-name">${pkg.display_name || pkg.name}</span>
+        <span class="card-name">${displayName}</span>
         ${badgeHtml}
       </div>
       <span class="card-summary">${summaryStr}</span>
@@ -575,7 +588,7 @@ async function openAppDetail(pkg) {
   const detailIconEl = document.getElementById('detail-icon');
   detailIconEl.src = getAppIconSrc(pkg.icon_path, pkg.is_flatpak, pkg.name);
   detailIconEl.onerror = () => handleIconError(detailIconEl, pkg.is_flatpak, pkg.name);
-  document.getElementById('detail-name').textContent = pkg.display_name || pkg.name;
+  document.getElementById('detail-name').textContent = formatPackageDisplayName(pkg);
   document.getElementById('detail-summary').textContent = pkg.summary || '';
   document.getElementById('detail-category').textContent = formatCategoryName(pkg.category);
   document.getElementById('detail-description').textContent = pkg.description || pkg.summary || tr('no_description');
