@@ -59,14 +59,16 @@ luppo build lopec.xml --no-sandbox --ignore-dependency
 ## Project Structure
 
 ```
-├── actions.py                      # Luppo package actions (build/handle scripts)
-├── build-luppo.sh                  # Script that builds the Rust binary and the .luppo package
-├── Makefile                        # Convenience build targets
-├── lupus-software-center.desktop   # Desktop entry file
-├── lopec.xml                       # Luppo package specification
-├── src-tauri/                      # Rust backend: Luppo/Flatpak integration,
-│   └── src/                        # Tauri IPC commands, system tray, i18n, settings
-└── ui/                             # Vanilla HTML5, CSS3 and JavaScript frontend + assets
+├── lupus-software-center/
+│    ├── actions.py                      # Luppo package actions (build/handle scripts)
+│    ├── build-luppo.sh                  # Script that builds the Rust binary and the .luppo package
+│    ├── Makefile                        # Convenience build targets
+│    ├── lupus-software-center.desktop   # Desktop entry file
+│    ├── lopec.xml                       # Luppo package specification
+│    ├── src-tauri/                      # Rust backend: Luppo/Flatpak integration,
+│    │   └── src/                        # Tauri IPC commands, system tray, i18n, settings
+│    └── ui/                             # Vanilla HTML5, CSS3 and JavaScript frontend + assets
+├── luppo/                               # Required (for luppo-core)
 ```
 
 ## License

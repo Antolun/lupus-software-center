@@ -466,7 +466,7 @@ function renderInstallWidget(container, pkg, showDelete = true) {
 
   if (activeWorkers.has(pkg.name)) {
     const worker = activeWorkers.get(pkg.name);
-    const statusText = worker.message || (worker.status === 'downloading' ? 'İndiriliyor...' : worker.status === 'installing' ? 'Kuruluyor...' : worker.status === 'configuring' ? 'Yapılandırılıyor...' : 'İşleniyor...');
+    const statusText = worker.message || (worker.status === 'downloading' ? 'İndiriliyor...' : worker.status === 'installing' ? 'Kuruluyor...' : worker.status === 'updating' ? 'Güncelleniyor...' : worker.status === 'configuring' ? 'Yapılandırılıyor...' : 'İşleniyor...');
     container.innerHTML = `
       <div class="progress-wrap">
         <div class="progress-bar-bg">
@@ -509,7 +509,12 @@ function renderInstallWidget(container, pkg, showDelete = true) {
 
 // ── Actions: Install / Remove ──
 async function startInstall(pkgName) {
-  activeWorkers.set(pkgName, { action: 'install', progress: 0, status: 'starting', message: 'Başlatılıyor...' });
+  const pkg = allPackages.find(p => p.name === pkgName) || (currentDetailPkg && currentDetailPkg.name === pkgName ? currentDetailPkg : null);
+  const isUpdate = pkg ? (pkg.has_update || pkg.installed) : false;
+  const actionName = isUpdate ? 'update' : 'install';
+  const startMsg = isUpdate ? (currentLanguage === 'tr' ? 'Güncelleniyor...' : 'Updating...') : (currentLanguage === 'tr' ? 'Başlatılıyor...' : 'Starting...');
+
+  activeWorkers.set(pkgName, { action: actionName, progress: 0, status: 'starting', message: startMsg });
   refreshAllWidgets(pkgName);
 
   try {
@@ -575,6 +580,9 @@ function refreshAllWidgets(pkgName) {
       renderInstallWidget(detailContainer, pkg, true);
     }
   }
+
+  // Update sidebar downloads badge count
+  updateSidebarUpdatesBadge();
 
   // Also refresh updates view if currently on updates page to show downloading packages
   if (currentCategory === 'updates') {
@@ -828,13 +836,8 @@ function renderSidebarCategories(cats) {
   const navContainer = document.getElementById('sidebar-nav');
   navContainer.innerHTML = '';
 
-  let updatesCount = 0;
-
   categories.forEach(cat => {
-    if (cat.id === 'updates') {
-      updatesCount = cat.count;
-      return;
-    }
+    if (cat.id === 'updates') return;
     const btn = document.createElement('button');
     btn.className = `sidebar-btn ${cat.id === currentCategory ? 'active' : ''}`;
     btn.setAttribute('data-cat', cat.id);
@@ -846,14 +849,21 @@ function renderSidebarCategories(cats) {
     navContainer.appendChild(btn);
   });
 
-  updateSidebarUpdatesBadge(updatesCount);
+  updateSidebarUpdatesBadge();
 }
 
-function updateSidebarUpdatesBadge(count) {
+function updateSidebarUpdatesBadge() {
   const badge = document.getElementById('sidebar-updates-badge');
   if (!badge) return;
-  badge.textContent = count;
-  badge.style.display = count > 0 ? 'inline-flex' : 'none';
+
+  const updates = allPackages.filter(p => p.has_update);
+  const downloading = Array.from(activeWorkers.keys())
+    .map(name => allPackages.find(p => p.name === name))
+    .filter(p => p && !p.has_update);
+
+  const total = updates.length + downloading.length;
+  badge.textContent = total;
+  badge.style.display = total > 0 ? 'inline-flex' : 'none';
 }
 
 function onNavClick(catId) {
@@ -1055,13 +1065,13 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.textContent = tr('checking_updates');
     try {
       const res = await invoke('check_for_updates', { updateRepo: true });
-      updateSidebarUpdatesBadge(res.count);
+      await refreshPackages();
+      updateSidebarUpdatesBadge();
       if (res.count > 0) {
         alert(tr('updates_found_msg', { count: res.count }));
       } else {
         alert(tr('system_up_to_date_msg'));
       }
-      await refreshPackages();
     } catch (e) {
       alert(tr('error_occurred') + ': ' + e);
     }
@@ -1078,16 +1088,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   listen('updates-checked', async (payload) => {
     if (payload && typeof payload.count === 'number') {
-      updateSidebarUpdatesBadge(payload.count);
       await refreshPackages();
+      updateSidebarUpdatesBadge();
     }
   });
 
   listen('tray-check-updates', async () => {
     try {
-      const res = await invoke('check_for_updates', { updateRepo: false });
-      updateSidebarUpdatesBadge(res.count);
+      await invoke('check_for_updates', { updateRepo: false });
       await refreshPackages();
+      updateSidebarUpdatesBadge();
     } catch (e) {
       console.error('Tray update check failed:', e);
     }

@@ -26,6 +26,13 @@
     </Package>
 
     <History>
+        <Update release="4">
+            <Date>2026-08-22</Date>
+            <Version>2.0.3</Version>
+            <Comment>Luppo CLI removed!</Comment>
+            <Name>Solzic0</Name>
+            <Email>solzic0@yandex.com</Email>
+        </Update>
         <Update release="3">
             <Date>2026-08-21</Date>
             <Version>2.0.2</Version>

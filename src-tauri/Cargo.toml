@@ -36,3 +36,4 @@ xml-rs = "0.8"
 dirs = "5"
 glib = "0.18"
 libc = "0.2"
+luppo-core = { path = "../../luppo/luppo-core" }

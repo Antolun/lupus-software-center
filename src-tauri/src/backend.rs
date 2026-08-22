@@ -171,80 +171,99 @@ impl LuppoBackend {
         if !self.luppo_available {
             return;
         }
-        let output = Command::new("luppo")
-            .arg("list-installed")
-            .output();
-
-        if let Ok(out) = output {
-            if out.status.success() {
-                let text = String::from_utf8_lossy(&out.stdout);
-                self.parse_luppo_list_output(&text, true);
+        if let Ok(db) = open_luppo_db() {
+            if let Ok(installed) = db.list_installed_packages() {
+                for pkg in installed {
+                    let name = pkg.name.clone();
+                    let display_name = format_luppo_display_name(&name);
+                    let icon_path = find_icon(&name);
+                    let summary = if !pkg.description.is_empty() {
+                        pkg.description.clone()
+                    } else {
+                        String::new()
+                    };
+                    let category = map_to_category(&name, "", &summary);
+                    let mut info = PackageInfo::new(&name);
+                    info.display_name = display_name;
+                    info.version = pkg.version.clone();
+                    info.release = pkg.release.to_string();
+                    info.summary = summary;
+                    info.description = pkg.description.clone();
+                    info.license = pkg.licenses.join(", ");
+                    info.homepage = pkg.homepage.unwrap_or_default();
+                    info.category = category;
+                    info.icon_name = name.clone();
+                    info.icon_path = icon_path;
+                    info.installed = true;
+                    info.installed_size = format_bytes(pkg.total_size);
+                    info.developer = if let Some(p) = pkg.packager {
+                        p.name
+                    } else {
+                        detect_developer(&name, &info.homepage, &info.component)
+                    };
+                    self.installed_packages.insert(name, info);
+                }
             }
         }
     }
 
     pub fn load_available_packages(&mut self) {
         if self.luppo_available {
-            let output = Command::new("luppo")
-                .arg("list-available")
-                .output();
-            if let Ok(out) = output {
-                if out.status.success() {
-                    let text = String::from_utf8_lossy(&out.stdout);
-                    self.parse_luppo_list_output(&text, false);
+            if let Ok(db) = open_luppo_db() {
+                if let Ok(available) = db.list_available_packages() {
+                    for pkg in available {
+                        let name = pkg.name.clone();
+                        let display_name = format_luppo_display_name(&name);
+                        let icon_path = find_icon(&name);
+                        let summary = pkg.get_summary();
+                        let description = pkg.get_description();
+                        let category = map_to_category(&name, &pkg.partof, &summary);
+                        let mut info = PackageInfo::new(&name);
+                        info.display_name = display_name;
+                        info.version = pkg.latest_version().to_string();
+                        info.release = pkg.release.to_string();
+                        info.summary = summary;
+                        info.description = description;
+                        info.license = pkg.licenses.join(", ");
+                        info.category = category;
+                        info.component = pkg.partof.clone();
+                        info.icon_name = name.clone();
+                        info.icon_path = icon_path;
+                        info.installed = self.installed_packages.contains_key(&name);
+                        info.download_size = format_bytes(pkg.package_size);
+                        info.installed_size = format_bytes(pkg.installed_size);
+                        info.dependencies_count = pkg
+                            .runtime_dependencies
+                            .as_ref()
+                            .map(|r| r.dependencies.len() as i32)
+                            .unwrap_or(0);
+                        info.developer = detect_developer(&name, &info.homepage, &info.component);
+                        self.available_packages.insert(name, info);
+                    }
                 }
             }
         }
-        // Kurulu paketleri güncelle
+        // Update installed packages with enriched summary/description if needed
         let installed_names: Vec<String> = self.installed_packages.keys().cloned().collect();
         for name in installed_names {
-            if let Some(pkg) = self.available_packages.get_mut(&name) {
-                pkg.installed = true;
-            }
-        }
-    }
-
-    fn parse_luppo_list_output(&mut self, text: &str, installed: bool) {
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with("Depodaki") || line.starts_with("Total") {
-                continue;
-            }
-            let line = line.trim_start_matches('🌐').trim();
-            let (name, version, summary) = if let Some(idx) = line.find(" - ") {
-                let name = line[..idx].trim().to_string();
-                let rest = line[idx + 3..].trim();
-                if rest.starts_with('v') {
-                    (name, rest[1..].trim().to_string(), String::new())
-                } else {
-                    (name, String::new(), rest.to_string())
+            if let Some(avail) = self.available_packages.get(&name) {
+                if let Some(inst) = self.installed_packages.get_mut(&name) {
+                    if inst.summary.is_empty() {
+                        inst.summary = avail.summary.clone();
+                    }
+                    if inst.description.is_empty() {
+                        inst.description = avail.description.clone();
+                    }
+                    if inst.category == "utilities" && avail.category != "utilities" {
+                        inst.category = avail.category.clone();
+                    }
+                    if inst.component.is_empty() {
+                        inst.component = avail.component.clone();
+                    }
                 }
-            } else {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.is_empty() { continue; }
-                let name = parts[0].to_string();
-                let ver = if parts.len() > 1 && parts[1].starts_with('v') {
-                    parts[1][1..].to_string()
-                } else {
-                    String::new()
-                };
-                (name, ver, String::new())
-            };
-
-            if name.is_empty() { continue; }
-            let cat = map_to_category(&name, "", &summary);
-            let icon_p = find_icon(&name);
-            let mut pkg = PackageInfo::new(&name);
-            pkg.version = version;
-            pkg.summary = summary;
-            pkg.category = cat;
-            pkg.icon_path = icon_p;
-            pkg.installed = installed;
-
-            if installed {
-                self.installed_packages.insert(name, pkg);
-            } else {
-                self.available_packages.insert(name, pkg);
+            }
+            if let Some(avail_pkg) = self.available_packages.get_mut(&name) {
+                avail_pkg.installed = true;
             }
         }
     }
@@ -257,44 +276,45 @@ impl LuppoBackend {
         let mut pkg = self.get_all_packages().get(pkg_name).cloned().unwrap_or_else(|| PackageInfo::new(pkg_name));
 
         if self.luppo_available {
-            if let Ok(out) = Command::new("luppo").args(["info", pkg_name]).output() {
-                if out.status.success() {
-                    let text = String::from_utf8_lossy(&out.stdout);
-                    for line in text.lines() {
-                        let l = line.trim();
-                        if l.is_empty() || l.starts_with("Yüklü paket") || l.contains("deposunda bulundu") || l.ends_with("bulunamadı.") {
-                            continue;
-                        }
-                        if let Some((k, v)) = l.split_once(':') {
-                            let key = k.trim();
-                            let val = v.trim();
-                            if key.contains("İsim") || key.contains("Name") {
-                                // "aerosky, sürüm: 2.0.0, yayım: 0"
-                                for part in val.split(',') {
-                                    if part.contains("sürüm:") || part.contains("version:") {
-                                        if let Some((_, ver)) = part.split_once(':') {
-                                            pkg.version = ver.trim().to_string();
-                                        }
-                                    }
-                                }
-                            } else if (key.contains("Özet") || key.contains("Summary")) && val != "Açıklama yok" && !val.is_empty() {
-                                pkg.summary = val.to_string();
-                            } else if key.contains("Açıklama") || key.contains("Description") {
-                                pkg.description = val.to_string();
-                            } else if key.contains("Lisanslar") || key.contains("Licenses") {
-                                pkg.license = val.to_string();
-                            } else if key.contains("Bileşen") || key.contains("Component") {
-                                pkg.component = val.to_string();
-                                pkg.category = map_to_category(&pkg.name, val, &pkg.summary);
-                            } else if key.contains("Bağımlılıkları") || key.contains("Dependencies") {
-                                let deps: Vec<&str> = val.split_whitespace().collect();
-                                pkg.dependencies_count = deps.len() as i32;
-                            } else if key.contains("Yerleşik Boyut") || key.contains("Installed Size") {
-                                pkg.installed_size = val.to_string();
-                            } else if key.contains("Paket Boyutu") || key.contains("Package Size") {
-                                pkg.download_size = val.to_string();
-                            }
-                        }
+            if let Ok(db) = open_luppo_db() {
+                if let Ok(Some(remote)) = db.get_available_package(pkg_name) {
+                    pkg.version = remote.latest_version().to_string();
+                    pkg.release = remote.release.to_string();
+                    let sum = remote.get_summary();
+                    if !sum.is_empty() { pkg.summary = sum; }
+                    let desc = remote.get_description();
+                    if !desc.is_empty() { pkg.description = desc; }
+                    if !remote.licenses.is_empty() { pkg.license = remote.licenses.join(", "); }
+                    if !remote.partof.is_empty() {
+                        pkg.component = remote.partof.clone();
+                        pkg.category = map_to_category(&pkg.name, &remote.partof, &pkg.summary);
+                    }
+                    if let Some(deps) = &remote.runtime_dependencies {
+                        pkg.dependencies_count = deps.dependencies.len() as i32;
+                    }
+                    if remote.package_size > 0 {
+                        pkg.download_size = format_bytes(remote.package_size);
+                    }
+                    if remote.installed_size > 0 {
+                        pkg.installed_size = format_bytes(remote.installed_size);
+                    }
+                }
+                if let Ok(Some(inst)) = db.get_installed_package(pkg_name) {
+                    pkg.version = inst.version.clone();
+                    pkg.release = inst.release.to_string();
+                    if !inst.description.is_empty() {
+                        pkg.description = inst.description.clone();
+                        if pkg.summary.is_empty() { pkg.summary = inst.description.clone(); }
+                    }
+                    if !inst.licenses.is_empty() { pkg.license = inst.licenses.join(", "); }
+                    if inst.total_size > 0 {
+                        pkg.installed_size = format_bytes(inst.total_size);
+                    }
+                    if let Some(hp) = inst.homepage {
+                        pkg.homepage = hp;
+                    }
+                    if let Some(p) = inst.packager {
+                        pkg.developer = p.name;
                     }
                 }
             }
@@ -462,11 +482,41 @@ impl LuppoBackend {
         results.into_iter().map(|(_, p)| p).collect()
     }
 
+    pub fn is_package_installed(&self, pkg_name: &str) -> bool {
+        if let Some(pkg) = self.installed_packages.get(pkg_name) {
+            if pkg.installed {
+                return true;
+            }
+        }
+        if let Some(pkg) = self.available_packages.get(pkg_name) {
+            if pkg.installed || pkg.has_update {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn is_package_upgradable(&self, pkg_name: &str) -> bool {
+        if let Some(pkg) = self.installed_packages.get(pkg_name) {
+            if pkg.has_update {
+                return true;
+            }
+        }
+        if let Some(pkg) = self.available_packages.get(pkg_name) {
+            if pkg.has_update {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn install_package(&self, pkg_name: &str) -> (bool, String) {
+        let is_installed = self.is_package_installed(pkg_name);
+        let is_upgradable = self.is_package_upgradable(pkg_name);
+        let is_upgrade = is_installed || is_upgradable;
         if pkg_name.starts_with("flatpak:") {
             let real_id = pkg_name.trim_start_matches("flatpak:");
-            let is_installed = self.installed_packages.contains_key(pkg_name);
-            let cmd = if is_installed {
+            let cmd = if is_upgrade {
                 vec!["update", "--noninteractive", "--assumeyes", real_id]
             } else {
                 vec!["install", "--noninteractive", "--assumeyes", real_id]
@@ -476,7 +526,8 @@ impl LuppoBackend {
         if !self.luppo_available {
             return (false, i18n::tr("luppo_missing"));
         }
-        run_luppo_cmd(&["install", "-y", pkg_name])
+        let action = if is_upgrade { "upgrade" } else { "install" };
+        run_luppo_cmd(&[action, "-y", pkg_name])
     }
 
     // ─── Async Install/Remove with Progress ──────────────────────────────────
@@ -490,13 +541,19 @@ impl LuppoBackend {
     where
         F: FnMut(ProgressEvent) + Send + 'static,
     {
+        let is_installed = self.is_package_installed(pkg_name);
+        let is_upgradable = self.is_package_upgradable(pkg_name);
+        let is_upgrade = is_installed || is_upgradable;
         if pkg_name.starts_with("flatpak:") {
-            return self.run_flatpak_with_progress(pkg_name, true, app_handle, on_progress).await;
+            let action = if is_upgrade { "update" } else { "install" };
+            return self.run_flatpak_with_progress(pkg_name, action, app_handle, on_progress).await;
         }
         if !self.luppo_available {
             return (false, i18n::tr("luppo_missing"));
         }
-        self.run_luppo_with_progress(&["install", "-y", pkg_name], "install", pkg_name, app_handle, on_progress).await
+        let action_cmd = if is_upgrade { "upgrade" } else { "install" };
+        let action_name = if is_upgrade { "update" } else { "install" };
+        self.run_luppo_with_progress(&[action_cmd, "-y", pkg_name], action_name, pkg_name, app_handle, on_progress).await
     }
 
     pub async fn remove_package_with_progress<F>(
@@ -509,7 +566,7 @@ impl LuppoBackend {
         F: FnMut(ProgressEvent) + Send + 'static,
     {
         if pkg_name.starts_with("flatpak:") {
-            return self.run_flatpak_with_progress(pkg_name, false, app_handle, on_progress).await;
+            return self.run_flatpak_with_progress(pkg_name, "remove", app_handle, on_progress).await;
         }
         if !self.luppo_available {
             return (false, i18n::tr("luppo_missing"));
@@ -612,7 +669,7 @@ impl LuppoBackend {
     async fn run_flatpak_with_progress<F>(
         &self,
         pkg_name: &str,
-        is_install: bool,
+        action: &str, // "install", "update", "remove"
         app_handle: &tauri::AppHandle,
         on_progress: F,
     ) -> (bool, String)
@@ -620,12 +677,17 @@ impl LuppoBackend {
         F: FnMut(ProgressEvent) + Send + 'static,
     {
         let real_id = pkg_name.trim_start_matches("flatpak:").to_string();
-        let args: Vec<String> = if is_install {
-            vec!["install".to_string(), "--noninteractive".to_string(), "--assumeyes".to_string(), real_id]
-        } else {
-            vec!["uninstall".to_string(), "--noninteractive".to_string(), "--assumeyes".to_string(), real_id]
+        let flatpak_cmd = match action {
+            "update" => "update",
+            "remove" => "uninstall",
+            _ => "install",
         };
-        let action = if is_install { "install" } else { "remove" };
+        let args: Vec<String> = vec![
+            flatpak_cmd.to_string(),
+            "--noninteractive".to_string(),
+            "--assumeyes".to_string(),
+            real_id,
+        ];
 
         let mut cmd = Command::new("flatpak");
         cmd.args(&args)
@@ -699,40 +761,145 @@ impl LuppoBackend {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn parse_luppo_upgrades_output(&self, text: &str) -> Vec<String> {
+        let mut upgradable = Vec::new();
+        for raw_line in text.lines() {
+            let line = raw_line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            let lower = line.to_lowercase();
+            // Ignore system / informational / header / footer lines
+            if lower.starts_with("sistem")
+                || lower.starts_with("güncellen")
+                || lower.starts_with("guncellen")
+                || lower.starts_with("güncelle")
+                || lower.starts_with("guncelle")
+                || lower.starts_with("toplam")
+                || lower.starts_with("tüm")
+                || lower.starts_with("tum")
+                || lower.starts_with("depo")
+                || lower.starts_with("mevcut")
+                || lower.starts_with("kaynak")
+                || lower.starts_with("uyarı")
+                || lower.starts_with("uyari")
+                || lower.starts_with("hata")
+                || lower.starts_with("warning")
+                || lower.starts_with("error")
+                || lower.starts_with('[')
+                || lower.starts_with('*')
+                || lower.starts_with('-')
+            {
+                continue;
+            }
+
+            // Extract package name (first part before " - " or first whitespace token)
+            let token = if let Some(idx) = line.find(" - ") {
+                &line[..idx]
+            } else {
+                line
+            };
+            let token = token.split_whitespace().next().unwrap_or("");
+            let name = token.trim_matches(|c: char| c == '(' || c == ')' || c == '[' || c == ']' || c == ':' || c == ',');
+
+            if name.is_empty() {
+                continue;
+            }
+
+            let name_lower = name.to_lowercase();
+            if name_lower == "güncellenebilir"
+                || name_lower == "guncellenebilir"
+                || name_lower == "toplam"
+                || name_lower == "güncellemek"
+                || name_lower == "guncellemek"
+                || name_lower == "sistem"
+                || name_lower == "depo"
+                || name_lower == "paket"
+                || name_lower == "paketler"
+            {
+                continue;
+            }
+
+            // Validate that the name is a real package (in installed/available or valid package name syntax)
+            let is_installed = self.installed_packages.contains_key(name);
+            let is_available = self.available_packages.contains_key(name);
+            let is_valid_name = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '+');
+
+            let valid = if !self.installed_packages.is_empty() || !self.available_packages.is_empty() {
+                is_installed || is_available
+            } else {
+                is_valid_name
+            };
+
+            if valid && !upgradable.contains(&name.to_string()) {
+                upgradable.push(name.to_string());
+            }
+        }
+        upgradable
+    }
+
     pub fn check_for_updates(&mut self, update_repo: bool) -> (usize, Vec<String>, String) {
         let mut upgradable: Vec<String> = vec![];
-        let mut error_msg = String::new();
+        let error_msg = String::new();
 
+        // 1. Reset all previous has_update flags so stale or invalid flags don't persist
+        for p in self.installed_packages.values_mut() {
+            p.has_update = false;
+        }
+        for p in self.available_packages.values_mut() {
+            p.has_update = false;
+        }
+
+        // 2. Ensure installed packages are loaded so we can properly flag them
+        if self.installed_packages.is_empty() {
+            if self.luppo_available {
+                self.load_installed_packages();
+            }
+            if self.flatpak_available {
+                self.load_installed_flatpaks();
+            }
+        }
+
+        // 3. Update repo if requested
         if update_repo && self.luppo_available {
             let _ = run_luppo_cmd(&["update-repo"]);
         }
 
+        // 4. Luppo updates via Rust database API (language independent)
         if self.luppo_available {
-            match Command::new("luppo").arg("list-upgrades").output() {
-                Ok(out) if out.status.success() => {
-                    let text = String::from_utf8_lossy(&out.stdout);
-                    for line in text.lines() {
-                        let line = line.trim();
-                        if line.is_empty() || line.starts_with("Sistem") || line.starts_with("Tüm") { continue; }
-                        let name = line.split(" - ").next().unwrap_or(line).split_whitespace().next().unwrap_or("").to_string();
-                        if !name.is_empty() && !upgradable.contains(&name) {
-                            upgradable.push(name.clone());
-                            if let Some(p) = self.installed_packages.get_mut(&name) {
-                                p.has_update = true;
-                            }
-                            if let Some(p) = self.available_packages.get_mut(&name) {
-                                p.has_update = true;
+            if let Ok(db) = open_luppo_db() {
+                if let Ok(installed) = db.list_installed_packages() {
+                    if let Ok(available) = db.list_available_packages() {
+                        for inst in installed {
+                            if let Some(remote) = available.iter().find(|p| p.name == inst.name) {
+                                let version_changed = remote.latest_version() != inst.version;
+                                let release_changed = remote.release != inst.release;
+                                let hash_changed = !remote.package_hash.is_empty() && remote.package_hash != inst.package_hash;
+
+                                if version_changed || release_changed || hash_changed {
+                                    let name = inst.name.clone();
+                                    if !upgradable.contains(&name) {
+                                        upgradable.push(name.clone());
+                                        if let Some(p) = self.installed_packages.get_mut(&name) {
+                                            p.has_update = true;
+                                            p.new_version = remote.latest_version().to_string();
+                                        }
+                                        if let Some(p) = self.available_packages.get_mut(&name) {
+                                            p.has_update = true;
+                                            p.new_version = remote.latest_version().to_string();
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                Err(e) => {
-                    error_msg = e.to_string();
-                }
-                _ => {}
             }
         }
 
+        // 5. Flatpak updates
         if self.flatpak_available {
             match Command::new("flatpak")
                 .args(["remote-ls", "--updates", "--columns=application"])
@@ -741,11 +908,16 @@ impl LuppoBackend {
                     let text = String::from_utf8_lossy(&out.stdout);
                     for line in text.lines() {
                         let app_id = line.trim();
-                        if app_id.is_empty() { continue; }
+                        if app_id.is_empty() || app_id.starts_with("error") || app_id.starts_with("Warning") {
+                            continue;
+                        }
                         let key = format!("flatpak:{}", app_id);
                         if !upgradable.contains(&key) {
                             upgradable.push(key.clone());
                             if let Some(p) = self.installed_packages.get_mut(&key) {
+                                p.has_update = true;
+                            }
+                            if let Some(p) = self.available_packages.get_mut(&key) {
                                 p.has_update = true;
                             }
                         }
@@ -762,6 +934,66 @@ impl LuppoBackend {
         if !self.luppo_available { return false; }
         run_luppo_cmd(&["update-repo"]).0
     }
+}
+
+// ─── Yardımcı Fonksiyonlar ────────────────────────────────────────────────
+
+pub fn format_bytes(bytes: u64) -> String {
+    if bytes == 0 {
+        return String::new();
+    }
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+pub fn open_luppo_db() -> Result<luppo_core::database::LuppoDatabase, String> {
+    let config = luppo_core::config::Config::load(None);
+    let original_db_path = config.directories.lib_dir.join("db");
+    if !original_db_path.exists() {
+        return Err("Luppo veritabanı bulunamadı".to_string());
+    }
+
+    let is_root = unsafe { libc::geteuid() == 0 };
+    let db_path = if !is_root {
+        let uid = unsafe { libc::geteuid() };
+        let temp_db = std::env::temp_dir().join(format!("luppo-db-swcenter-{}", uid));
+        let _ = copy_dir_all(&original_db_path, &temp_db);
+        temp_db
+    } else {
+        original_db_path
+    };
+
+    luppo_core::database::LuppoDatabase::open(db_path)
+        .map_err(|e| format!("Luppo veritabanı açılamadı: {}", e))
+}
+
+fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    let src = src.as_ref();
+    let dst = dst.as_ref();
+    std::fs::create_dir_all(dst)?;
+    if let Ok(entries) = std::fs::read_dir(src) {
+        for entry in entries.flatten() {
+            let ty = entry.file_type()?;
+            let dest_path = dst.join(entry.file_name());
+            if ty.is_dir() {
+                copy_dir_all(entry.path(), dest_path)?;
+            } else {
+                let _ = std::fs::copy(entry.path(), dest_path);
+            }
+        }
+    }
+    Ok(())
 }
 
 // ─── Yardımcı Fonksiyonlar ────────────────────────────────────────────────
@@ -1210,6 +1442,8 @@ fn parse_luppo_progress(line: &str, pkg_name: &str, action: &str) -> Option<Prog
             "completed"
         } else if lower.contains("kurul") || lower.contains("install") {
             "installing"
+        } else if lower.contains("güncellen") || lower.contains("upgrade") || lower.contains("update") {
+            "updating"
         } else if lower.contains("yapılandır") || lower.contains("configur") {
             "configuring"
         } else {
@@ -1220,6 +1454,8 @@ fn parse_luppo_progress(line: &str, pkg_name: &str, action: &str) -> Option<Prog
         (100, "completed")
     } else if lower.contains("yapılandır") || lower.contains("configur") {
         (90, "configuring")
+    } else if lower.contains("güncellen") || lower.contains("upgrade") || lower.contains("update") {
+        (70, "updating")
     } else if lower.contains("kurul") || lower.contains("install") {
         (70, "installing")
     } else if lower.contains("paketler açılıyor") || lower.contains("extract") || lower.contains("unpack") {
@@ -1253,6 +1489,8 @@ fn parse_flatpak_progress(line: &str, pkg_name: &str, action: &str) -> Option<Pr
     let (progress, status) = if let Some(p) = parsed_progress {
         let st = if p >= 100 {
             "completed"
+        } else if lower.contains("update") || lower.contains("güncellen") || lower.contains("upgrade") {
+            "updating"
         } else if lower.contains("install") || lower.contains("kur") {
             "installing"
         } else {
@@ -1261,6 +1499,8 @@ fn parse_flatpak_progress(line: &str, pkg_name: &str, action: &str) -> Option<Pr
         (p, st)
     } else if lower.contains("complete") || lower.contains("tamamlandı") {
         (100, "completed")
+    } else if lower.contains("update") || lower.contains("güncellen") || lower.contains("upgrade") {
+        (75, "updating")
     } else if lower.contains("install") || lower.contains("kurul") {
         (75, "installing")
     } else if lower.contains("download") || lower.contains("indir") {
@@ -1316,6 +1556,27 @@ mod tests {
         assert_eq!(pkg.name, "luppo-package-installer");
         assert_eq!(pkg.display_name, "Luppo Package Installer");
         assert_eq!(pkg.origin, "Luppo");
+    }
+
+    #[test]
+    fn test_parse_luppo_upgrades_output() {
+        let mut backend = LuppoBackend::default();
+        let mut pkg = PackageInfo::new("lupus-software-center");
+        pkg.installed = true;
+        backend.installed_packages.insert("lupus-software-center".to_string(), pkg);
+
+        let output = r#"
+Güncellenebilir Paketler:
+lupus-software-center                 - LupuS Software Center - Luppo Market
+Toplam 1 paket güncellenebilir.
+Güncellemek için 'luppo upgrade' veya 'luppo up' komutunu kullanabilirsiniz.
+"#;
+        let upgrades = backend.parse_luppo_upgrades_output(output);
+        assert_eq!(upgrades, vec!["lupus-software-center"]);
+
+        let empty_output = "Sistem tamamen güncel.\n";
+        let empty_upgrades = backend.parse_luppo_upgrades_output(empty_output);
+        assert!(empty_upgrades.is_empty());
     }
 }
 

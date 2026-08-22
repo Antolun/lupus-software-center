@@ -117,6 +117,7 @@ async fn run_update_check(app: &tauri::AppHandle, update_repo: bool) {
 
     let settings = settings::load_settings();
     let mut auto_installed = Vec::new();
+    let mut self_updated = false;
     let mut final_count = count;
     if settings.auto_install_updates && count > 0 {
         for pkg in &packages {
@@ -126,6 +127,9 @@ async fn run_update_check(app: &tauri::AppHandle, update_repo: bool) {
             };
             if success {
                 auto_installed.push(pkg.clone());
+                if commands::is_self_package(pkg) {
+                    self_updated = true;
+                }
             }
         }
         // Kurulum sonrası kalan güncelleme sayısını yeniden hesapla
@@ -147,4 +151,12 @@ async fn run_update_check(app: &tauri::AppHandle, update_repo: bool) {
             "auto_installed": auto_installed,
         }),
     );
+
+    if self_updated {
+        let app_handle_restart = app.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            commands::restart_app(&app_handle_restart);
+        });
+    }
 }

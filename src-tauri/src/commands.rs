@@ -122,6 +122,50 @@ pub async fn get_package_details(package_name: String, state: State<'_, BackendS
     Ok(pkg)
 }
 
+pub fn is_self_package(pkg_name: &str) -> bool {
+    let name = pkg_name.trim_start_matches("flatpak:").to_lowercase();
+    name == "lupus-software-center" || name == env!("CARGO_PKG_NAME")
+}
+
+pub fn restart_app(app_handle: &tauri::AppHandle) {
+    log::info!("Kendini güncelleme sonrası uygulama yeniden başlatılıyor...");
+    
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    let mut restarted = false;
+
+    if let Ok(exe) = std::env::current_exe() {
+        let exe_str = exe.to_string_lossy();
+        let target_exe = if exe_str.ends_with(" (deleted)") {
+            std::path::PathBuf::from(exe_str.trim_end_matches(" (deleted)"))
+        } else {
+            exe.clone()
+        };
+
+        if target_exe.exists() {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            if let Ok(_) = std::process::Command::new(&target_exe).args(&args).spawn() {
+                restarted = true;
+            }
+        }
+    }
+
+    if !restarted {
+        if std::path::Path::new("/usr/bin/lupus-software-center").exists() {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            if let Ok(_) = std::process::Command::new("/usr/bin/lupus-software-center").args(&args).spawn() {
+                restarted = true;
+            }
+        }
+    }
+
+    if restarted {
+        app_handle.exit(0);
+    } else {
+        app_handle.restart();
+    }
+}
+
 #[tauri::command]
 pub async fn install_package(
     package_name: String,
@@ -130,6 +174,7 @@ pub async fn install_package(
 ) -> Result<ActionResponse, String> {
     let pkg_name = package_name.clone();
     let app_handle_cb = app_handle.clone();
+    let is_self = is_self_package(&pkg_name);
 
     // Clone the backend out of the lock so we don't hold MutexGuard across .await
     let backend_clone = {
@@ -150,8 +195,16 @@ pub async fn install_package(
         if let Some(pkg) = backend.installed_packages.get_mut(&pkg_name) {
             pkg.has_update = false;
         } else if let Some(pkg) = backend.available_packages.get(&pkg_name).cloned() {
-            backend.installed_packages.insert(pkg_name, pkg);
+            backend.installed_packages.insert(pkg_name.clone(), pkg);
         }
+    }
+
+    if success && is_self {
+        let app_handle_restart = app_handle.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            restart_app(&app_handle_restart);
+        });
     }
 
     Ok(ActionResponse { success, message })
