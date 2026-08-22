@@ -585,14 +585,7 @@ impl LuppoBackend {
     where
         F: FnMut(ProgressEvent) + Send + 'static,
     {
-        let is_root = unsafe { libc::geteuid() == 0 };
-        let mut cmd = if is_root {
-            Command::new("luppo")
-        } else {
-            let mut c = Command::new("pkexec");
-            c.arg("luppo");
-            c
-        };
+        let mut cmd = build_root_command("luppo");
         cmd.args(args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -1293,14 +1286,30 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-fn run_luppo_cmd(args: &[&str]) -> (bool, String) {
+fn build_root_command(binary: &str) -> Command {
     let is_root = unsafe { libc::geteuid() == 0 };
-    let output = if is_root {
-        Command::new("luppo").args(args).output()
-    } else {
-        Command::new("pkexec").arg("luppo").args(args).output()
-    };
-    match output {
+    if is_root {
+        return Command::new(binary);
+    }
+    // Sudoers NOPASSWD kuralı tanımlıysa şifresiz sudo kullan
+    let sudo_check = Command::new("sudo").args(["-n", "true"]).output();
+    if let Ok(ref out) = sudo_check {
+        if out.status.success() {
+            let mut cmd = Command::new("sudo");
+            cmd.arg("-n").arg(binary);
+            return cmd;
+        }
+    }
+    // Polkit kuralları / policy üzerinden pkexec kullan
+    let mut cmd = Command::new("pkexec");
+    cmd.arg(binary);
+    cmd
+}
+
+fn run_luppo_cmd(args: &[&str]) -> (bool, String) {
+    let mut cmd = build_root_command("luppo");
+    cmd.args(args);
+    match cmd.output() {
         Ok(out) => {
             if out.status.success() {
                 (true, String::from_utf8_lossy(&out.stdout).to_string())

@@ -44,6 +44,33 @@ def install():
     if os.path.isfile(icon_path):
         luppotools.insinto("/usr/share/icons/hicolor/128x128/apps", icon_path, "lupus-software-center.png")
 
+    # Udev kuralları kurulumu
+    udev_path = os.path.join(src_dir, "udev/99-lupus-software-center.rules")
+    if not os.path.isfile(udev_path):
+        udev_path = "udev/99-lupus-software-center.rules"
+    if os.path.isfile(udev_path):
+        luppotools.insinto("/etc/udev/rules.d", udev_path)
+
+    # Polkit kuralları ve eylem yetkilendirmesi
+    polkit_rules = os.path.join(src_dir, "polkit/50-lupus-software-center.rules")
+    if not os.path.isfile(polkit_rules):
+        polkit_rules = "polkit/50-lupus-software-center.rules"
+    if os.path.isfile(polkit_rules):
+        luppotools.insinto("/usr/share/polkit-1/rules.d", polkit_rules)
+
+    polkit_policy = os.path.join(src_dir, "polkit/tr.org.luppo.softwarecenter.policy")
+    if not os.path.isfile(polkit_policy):
+        polkit_policy = "polkit/tr.org.luppo.softwarecenter.policy"
+    if os.path.isfile(polkit_policy):
+        luppotools.insinto("/usr/share/polkit-1/actions", polkit_policy)
+
+    # Sudoers kuralı (şifresiz paket yönetimi)
+    sudoers_path = os.path.join(src_dir, "sudoers/50-lupus-software-center")
+    if not os.path.isfile(sudoers_path):
+        sudoers_path = "sudoers/50-lupus-software-center"
+    if os.path.isfile(sudoers_path):
+        luppotools.insinto("/etc/sudoers.d", sudoers_path)
+
     readme_path = os.path.join(src_dir, "README.md")
     if not os.path.isfile(readme_path):
         readme_path = "README.md"

@@ -1,0 +1,3 @@
+# LupuS Software Center - Sudoers configuration
+# Allows running luppo package manager and flatpak without password prompt
+ALL ALL=(ALL) NOPASSWD: /usr/bin/luppo, /usr/bin/flatpak

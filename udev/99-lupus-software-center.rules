@@ -1,0 +1,3 @@
+# LupuS Software Center - Udev rules
+# Allow desktop user access for package management and hardware integration
+ACTION=="add|change", SUBSYSTEM=="*", TAG+="uaccess"

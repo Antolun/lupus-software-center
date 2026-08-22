@@ -89,9 +89,9 @@ fn start_background_services(app: &tauri::AppHandle) {
     let app_handle = app.clone();
 
     tauri::async_runtime::spawn(async move {
-        // Başlangıçtan kısa süre sonra ilk kontrol (rozeti doldurur)
+        // Başlangıçtan kısa süre sonra ilk kontrol (depoları güncelle ve rozeti doldur)
         tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-        run_update_check(&app_handle, false).await;
+        run_update_check(&app_handle, true).await;
 
         loop {
             let interval = settings::load_settings().check_interval_hours;
@@ -101,13 +101,16 @@ fn start_background_services(app: &tauri::AppHandle) {
                 continue;
             }
             tokio::time::sleep(std::time::Duration::from_secs(interval as u64 * 3600)).await;
-            run_update_check(&app_handle, false).await;
+            run_update_check(&app_handle, true).await;
         }
     });
 }
 
 async fn run_update_check(app: &tauri::AppHandle, update_repo: bool) {
     use tauri::Emitter;
+    use tauri_plugin_notification::NotificationExt;
+
+    log::info!("[AutoUpdater] Güncelleme denetimi başlatılıyor (update_repo: {})...", update_repo);
 
     let state = app.state::<commands::BackendState>();
     let (count, packages, _error) = {
@@ -119,7 +122,10 @@ async fn run_update_check(app: &tauri::AppHandle, update_repo: bool) {
     let mut auto_installed = Vec::new();
     let mut self_updated = false;
     let mut final_count = count;
+
     if settings.auto_install_updates && count > 0 {
+        log::info!("[AutoUpdater] {} adet güncelleme otomatik olarak yükleniyor (Luppo & Flatpak)...", count);
+        
         for pkg in &packages {
             let (success, _msg) = {
                 let backend = state.0.lock().unwrap();
@@ -130,8 +136,20 @@ async fn run_update_check(app: &tauri::AppHandle, update_repo: bool) {
                 if commands::is_self_package(pkg) {
                     self_updated = true;
                 }
+
+                // Backend durumunu güncelle
+                if let Ok(mut backend) = state.0.lock() {
+                    if let Some(p) = backend.available_packages.get_mut(pkg) {
+                        p.installed = true;
+                        p.has_update = false;
+                    }
+                    if let Some(p) = backend.installed_packages.get_mut(pkg) {
+                        p.has_update = false;
+                    }
+                }
             }
         }
+
         // Kurulum sonrası kalan güncelleme sayısını yeniden hesapla
         if !auto_installed.is_empty() {
             let (remaining, _, _) = {
@@ -139,7 +157,31 @@ async fn run_update_check(app: &tauri::AppHandle, update_repo: bool) {
                 backend.check_for_updates(false)
             };
             final_count = remaining;
+
+            // Otomatik güncelleme bildirimini gönder
+            let msg = if settings.language == "tr" {
+                format!("{} adet güncelleme arka planda başarıyla yüklendi.", auto_installed.len())
+            } else {
+                format!("{} updates were successfully installed in the background.", auto_installed.len())
+            };
+            let _ = app.notification()
+                .builder()
+                .title("LupuS Software Center")
+                .body(msg)
+                .show();
         }
+    } else if count > 0 {
+        // Otomatik yükleme kapalıysa yeni güncelleme olduğunu bildir
+        let msg = if settings.language == "tr" {
+            format!("{} adet yeni güncelleme mevcut (Luppo ve Flatpak).", count)
+        } else {
+            format!("{} new updates available (Luppo & Flatpak).", count)
+        };
+        let _ = app.notification()
+            .builder()
+            .title("LupuS Software Center")
+            .body(msg)
+            .show();
     }
 
     let _ = app.emit_to(
@@ -153,9 +195,21 @@ async fn run_update_check(app: &tauri::AppHandle, update_repo: bool) {
     );
 
     if self_updated {
+        log::info!("[AutoUpdater] LupuS Software Center güncellendi, yeniden başlatılıyor...");
+        let restart_msg = if settings.language == "tr" {
+            "LupuS Software Center güncellendi, yeniden başlatılıyor..."
+        } else {
+            "LupuS Software Center has been updated, restarting..."
+        };
+        let _ = app.notification()
+            .builder()
+            .title("LupuS Software Center")
+            .body(restart_msg)
+            .show();
+
         let app_handle_restart = app.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
             commands::restart_app(&app_handle_restart);
         });
     }

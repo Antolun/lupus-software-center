@@ -21,11 +21,22 @@
             <Path fileType="executable">/usr/bin/lupus-software-center</Path>
             <Path fileType="data">/usr/share/applications/lupus-software-center.desktop</Path>
             <Path fileType="data">/usr/share/icons/hicolor/128x128/apps/lupus-software-center.png</Path>
+            <Path fileType="config">/etc/udev/rules.d/99-lupus-software-center.rules</Path>
+            <Path fileType="data">/usr/share/polkit-1/rules.d/50-lupus-software-center.rules</Path>
+            <Path fileType="data">/usr/share/polkit-1/actions/tr.org.luppo.softwarecenter.policy</Path>
+            <Path fileType="config">/etc/sudoers.d/50-lupus-software-center</Path>
             <Path fileType="doc">/usr/share/doc/lupus-software-center</Path>
         </Files>
     </Package>
 
     <History>
+        <Update release="5">
+            <Date>2026-08-22</Date>
+            <Version>2.0.4</Version>
+            <Comment>Udev, polkit and sudoers rules added for passwordless management; revamped auto-updater for Luppo and Flatpak</Comment>
+            <Name>Solzic0</Name>
+            <Email>solzic0@yandex.com</Email>
+        </Update>
         <Update release="4">
             <Date>2026-08-22</Date>
             <Version>2.0.3</Version>

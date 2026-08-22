@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+    <vendor>LupuS</vendor>
+    <vendor_url>https://github.com/Antolun/lupus-software-center</vendor_url>
+    <icon_name>lupus-software-center</icon_name>
+
+    <action id="tr.org.luppo.softwarecenter.manage">
+        <description>LupuS Software Center Package Operations</description>
+        <description xml:lang="tr">LupuS Yazılım Merkezi Paket İşlemleri</description>
+        <message>Authentication is required to install, update or remove applications</message>
+        <message xml:lang="tr">Uygulama yüklemek, güncellemek veya kaldırmak için yetkilendirme gerekiyor</message>
+        <defaults>
+            <allow_any>yes</allow_any>
+            <allow_inactive>yes</allow_inactive>
+            <allow_active>yes</allow_active>
+        </defaults>
+    </action>
+
+    <action id="org.freedesktop.policykit.exec">
+        <description>Run Luppo Package Manager</description>
+        <description xml:lang="tr">Luppo Paket Yöneticisini Çalıştır</description>
+        <message>Authentication is required to run Luppo package manager</message>
+        <message xml:lang="tr">Luppo paket yöneticisini çalıştırmak için yetkilendirme gerekiyor</message>
+        <defaults>
+            <allow_any>yes</allow_any>
+            <allow_inactive>yes</allow_inactive>
+            <allow_active>yes</allow_active>
+        </defaults>
+        <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/luppo</annotate>
+        <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+    </action>
+</policyconfig>
