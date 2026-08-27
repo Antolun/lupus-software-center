@@ -89,9 +89,36 @@
         <button id="btn-nav-back" class="nav-back-btn" title="Geri">
           <img src="assets/icons/go-previous.svg" alt="Geri">
         </button>
-        <div class="search-box-wrap">
+        <div class="search-box-wrap" id="search-box-wrap">
           <img src="assets/icons/edit-find.svg" class="search-icon-img" alt="Ara">
-          <input type="text" id="search-input" class="search-input" placeholder="Uygulama ara..." data-i18n-placeholder="search_placeholder">
+          <input type="text" id="search-input" class="search-input" placeholder="Uygulama veya paket ara... (Ctrl+F)" data-i18n-placeholder="search_placeholder" autocomplete="off" spellcheck="false">
+          <button id="btn-search-clear" class="search-clear-btn" title="Aramayı Temizle" style="display:none;">
+            <img src="assets/icons/window-close.svg" alt="Temizle">
+          </button>
+          
+          <!-- Search Suggestions Popover -->
+          <div id="search-suggestions" class="search-suggestions-popover" style="display:none;">
+            <div class="search-popover-section" id="recent-searches-section">
+              <div class="search-popover-header">
+                <span data-i18n="recent_searches">Son Aramalar</span>
+                <button id="btn-clear-search-history" class="search-popover-link" data-i18n="clear_history">Geçmişi Temizle</button>
+              </div>
+              <div id="recent-searches-list" class="recent-searches-list"></div>
+            </div>
+            <div class="search-popover-section">
+              <div class="search-popover-header">
+                <span data-i18n="quick_filters">Popüler Aramalar</span>
+              </div>
+              <div class="quick-tags-wrap" id="quick-tags-list">
+                <span class="quick-tag" data-query="geliştirme">Geliştirme</span>
+                <span class="quick-tag" data-query="tarayıcı">İnternet</span>
+                <span class="quick-tag" data-query="multimedya">Multimedya</span>
+                <span class="quick-tag" data-query="oyun">Oyunlar</span>
+                <span class="quick-tag" data-query="grafik">Grafik</span>
+                <span class="quick-tag" data-query="ofis">Ofis</span>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="topbar-right">
           <!-- <button id="btn-topbar-settings" class="header-settings-btn" title="Ayarlar">
@@ -214,21 +241,107 @@
 
         <!-- 5. Search Results View -->
         <section id="view-search" class="view-page">
-          <div class="section-header" style="margin-bottom:20px;">
-            <div style="display:flex; align-items:center; gap:12px;">
+          <!-- Search Header with Query & Counter -->
+          <div class="search-page-header">
+            <div class="search-title-wrap">
               <img src="assets/icons/edit-find.svg" class="page-header-icon" alt="Arama">
-              <h2 id="search-results-title" class="section-title" style="font-size:22px;">Arama Sonuçları...</h2>
+              <div>
+                <h2 id="search-results-title" class="section-title" style="font-size:22px;">Arama Sonuçları...</h2>
+                <span id="search-results-count-badge" class="search-count-badge">0 sonuç</span>
+              </div>
+            </div>
+            <button id="btn-reset-filters" class="btn-reset-filters" style="display:none;">
+              <img src="assets/icons/view-refresh.svg" alt="Sıfırla">
+              <span data-i18n="clear_filters">Filtreleri Temizle</span>
+            </button>
+          </div>
+
+          <!-- Search Filter & Sort Bar -->
+          <div class="search-filter-bar">
+            <!-- Type Tabs (All, Apps, Packages) -->
+            <div class="filter-type-tabs">
+              <button class="filter-tab-btn active" data-type="all">
+                <span data-i18n="filter_all_types">Tümü</span>
+                <span class="filter-tab-badge" id="badge-count-all">0</span>
+              </button>
+              <button class="filter-tab-btn" data-type="gui">
+                <span data-i18n="filter_apps_only">Uygulamalar</span>
+                <span class="filter-tab-badge" id="badge-count-gui">0</span>
+              </button>
+              <button class="filter-tab-btn" data-type="lib">
+                <span data-i18n="filter_pkgs_only">Paketler & Kütüphaneler</span>
+                <span class="filter-tab-badge" id="badge-count-lib">0</span>
+              </button>
+            </div>
+
+            <!-- Filter Dropdowns Row -->
+            <div class="filter-dropdowns-row">
+              <!-- Category Filter -->
+              <div class="filter-select-wrap">
+                <label class="filter-select-label" data-i18n="category">Kategori</label>
+                <select id="filter-category" class="filter-select">
+                  <option value="all" data-i18n="filter_all_categories">Tüm Kategoriler</option>
+                  <option value="development" data-i18n="nav_development">Geliştirme</option>
+                  <option value="education" data-i18n="nav_education">Eğitim</option>
+                  <option value="enterprise" data-i18n="nav_enterprise">Kurumsal</option>
+                  <option value="games" data-i18n="nav_games">Oyunlar</option>
+                  <option value="graphics" data-i18n="nav_graphics">Grafik</option>
+                  <option value="internet" data-i18n="nav_internet">İnternet</option>
+                  <option value="multimedia" data-i18n="nav_multimedia">Multimedya</option>
+                  <option value="office" data-i18n="nav_office">Ofis</option>
+                  <option value="system" data-i18n="nav_system">Sistem</option>
+                  <option value="utilities" data-i18n="nav_utilities">Araçlar</option>
+                </select>
+              </div>
+
+              <!-- Source / Repo Filter -->
+              <div class="filter-select-wrap">
+                <label class="filter-select-label" data-i18n="repo_origin">Kaynak</label>
+                <select id="filter-source" class="filter-select">
+                  <option value="all" data-i18n="filter_all_sources">Tüm Kaynaklar</option>
+                  <option value="luppo" data-i18n="filter_source_luppo">Luppo Deposu</option>
+                  <option value="flatpak" data-i18n="filter_source_flatpak">Flatpak</option>
+                </select>
+              </div>
+
+              <!-- Installation Status Filter -->
+              <div class="filter-select-wrap">
+                <label class="filter-select-label" data-i18n="type">Durum</label>
+                <select id="filter-status" class="filter-select">
+                  <option value="all" data-i18n="filter_all_status">Tüm Durumlar</option>
+                  <option value="installed" data-i18n="filter_status_installed">Kurulu</option>
+                  <option value="not_installed" data-i18n="filter_status_not_installed">Kurulu Değil</option>
+                  <option value="updatable" data-i18n="filter_status_updatable">Güncellemesi Var</option>
+                </select>
+              </div>
+
+              <!-- Sort Order -->
+              <div class="filter-select-wrap" style="margin-left:auto;">
+                <label class="filter-select-label" data-i18n="sort_by">Sırala</label>
+                <select id="filter-sort" class="filter-select">
+                  <option value="relevance" data-i18n="sort_relevance">En Alakalı</option>
+                  <option value="name_asc" data-i18n="sort_name_asc">İsim (A-Z)</option>
+                  <option value="name_desc" data-i18n="sort_name_desc">İsim (Z-A)</option>
+                  <option value="rating" data-i18n="sort_rating">Puanlama</option>
+                  <option value="downloads" data-i18n="sort_downloads">İndirme Sayısı</option>
+                </select>
+              </div>
             </div>
           </div>
-          <div class="section-header">
-            <h3 class="section-title" data-i18n="all_applications">Tüm Uygulamalar</h3>
-          </div>
-          <div id="search-apps-grid" class="cards-grid"></div>
 
-          <div class="section-header" style="margin-top:20px;">
-            <h3 class="section-title" data-i18n="packages">Paketler</h3>
+          <!-- Empty State (Hidden by default) -->
+          <div id="search-empty-state" class="search-empty-container" style="display:none;">
+            <img src="assets/icons/plasma-search.svg" class="empty-state-icon" alt="Bulunamadı">
+            <h3 class="empty-state-title" data-i18n="no_search_results">Aradığınız kriterlere uygun uygulama veya paket bulunamadı.</h3>
+            <p class="empty-state-desc" data-i18n="no_search_results_hint">Farklı bir arama terimi deneyebilir veya aktif filtreleri sıfırlayabilirsiniz.</p>
+            <button id="btn-empty-reset-filters" class="btn-action install" style="margin-top:12px;">
+              <img src="assets/icons/view-refresh.svg" alt="">
+              <span data-i18n="clear_filters">Filtreleri Temizle</span>
+            </button>
           </div>
-          <div id="search-pkgs-grid" class="cards-grid"></div>
+
+          <!-- Results Grid -->
+          <div id="search-results-grid" class="cards-grid"></div>
         </section>
 
         <!-- 6. Settings View -->

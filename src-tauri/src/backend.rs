@@ -136,6 +136,30 @@ pub struct ProgressEvent {
     pub message: String,
 }
 
+// ─── Search Normalizer ───────────────────────────────────────────────────────
+pub fn normalize_for_search(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            'ç' | 'Ç' => normalized.push('c'),
+            'ğ' | 'Ğ' => normalized.push('g'),
+            'ı' | 'I' | 'İ' | 'i' => normalized.push('i'),
+            'ö' | 'Ö' => normalized.push('o'),
+            'ş' | 'Ş' => normalized.push('s'),
+            'ü' | 'Ü' => normalized.push('u'),
+            'â' | 'Â' => normalized.push('a'),
+            'î' | 'Î' => normalized.push('i'),
+            'û' | 'Û' => normalized.push('u'),
+            other => {
+                for lc in other.to_lowercase() {
+                    normalized.push(lc);
+                }
+            }
+        }
+    }
+    normalized
+}
+
 // ─── LuppoBackend ──────────────────────────────────────────────────────────
 
 #[derive(Default, Clone)]
@@ -456,29 +480,119 @@ impl LuppoBackend {
     }
 
     pub fn search_packages(&self, query: &str) -> Vec<PackageInfo> {
-        let q = query.to_lowercase();
+        let raw_q = query.trim();
+        if raw_q.is_empty() {
+            return vec![];
+        }
+        let q_norm = normalize_for_search(raw_q);
+        let tokens: Vec<&str> = q_norm.split_whitespace().collect();
+        if tokens.is_empty() {
+            return vec![];
+        }
+
         let all = self.get_all_packages();
         let mut results: Vec<(i32, PackageInfo)> = vec![];
+
         for pkg in all.values() {
-            let mut score = 0i32;
-            if pkg.name.to_lowercase() == q || pkg.display_name.to_lowercase() == q {
-                score += 10;
-            } else if pkg.name.to_lowercase().starts_with(&q) || pkg.display_name.to_lowercase().starts_with(&q) {
-                score += 5;
-            } else if pkg.name.to_lowercase().contains(&q) || pkg.display_name.to_lowercase().contains(&q) {
-                score += 3;
+            let name_norm = normalize_for_search(&pkg.name);
+            let display_norm = normalize_for_search(&pkg.display_name);
+            let summary_norm = normalize_for_search(&pkg.summary);
+            let desc_norm = normalize_for_search(&pkg.description);
+            let cat_norm = normalize_for_search(&pkg.category);
+            let dev_norm = normalize_for_search(&pkg.developer);
+
+            // Tüm token'ların paket bilgilerinde eşleştiğini doğrula (AND logic)
+            let mut matches_all_tokens = true;
+            let mut total_score = 0i32;
+
+            // Tam ad veya görünen ad tam eşleşmesi (büyük alaka bonusu)
+            if name_norm == q_norm || display_norm == q_norm {
+                total_score += 120;
+            } else if name_norm.starts_with(&q_norm) || display_norm.starts_with(&q_norm) {
+                total_score += 70;
+            } else if display_norm.contains(&q_norm) {
+                total_score += 40;
+            } else if name_norm.contains(&q_norm) {
+                total_score += 30;
             }
-            if pkg.summary.to_lowercase().contains(&q) {
-                score += 2;
+
+            for &token in &tokens {
+                let mut token_matched = false;
+                let mut token_score = 0i32;
+
+                // İsme göre eşleşme
+                if display_norm == token || name_norm == token {
+                    token_score += 50;
+                    token_matched = true;
+                } else if display_norm.starts_with(token) || name_norm.starts_with(token) {
+                    token_score += 35;
+                    token_matched = true;
+                } else if display_norm.split_whitespace().any(|w| w.starts_with(token)) {
+                    // Kelime başlangıcı (örn: "Visual Studio Code" -> "code")
+                    token_score += 30;
+                    token_matched = true;
+                } else if display_norm.contains(token) {
+                    token_score += 20;
+                    token_matched = true;
+                } else if name_norm.contains(token) {
+                    token_score += 15;
+                    token_matched = true;
+                }
+
+                // Kategoriye göre eşleşme
+                if cat_norm == token {
+                    token_score += 25;
+                    token_matched = true;
+                } else if cat_norm.contains(token) {
+                    token_score += 15;
+                    token_matched = true;
+                }
+
+                // Geliştiriciye göre eşleşme
+                if dev_norm.contains(token) {
+                    token_score += 15;
+                    token_matched = true;
+                }
+
+                // Özet (summary) eşleşmesi
+                if summary_norm.split_whitespace().any(|w| w.starts_with(token)) {
+                    token_score += 15;
+                    token_matched = true;
+                } else if summary_norm.contains(token) {
+                    token_score += 10;
+                    token_matched = true;
+                }
+
+                // Açıklama (description) eşleşmesi
+                if desc_norm.contains(token) {
+                    token_score += 5;
+                    token_matched = true;
+                }
+
+                if !token_matched {
+                    matches_all_tokens = false;
+                    break;
+                }
+
+                total_score += token_score;
             }
-            if pkg.description.to_lowercase().contains(&q) {
-                score += 1;
-            }
-            if score > 0 {
-                results.push((score, pkg.clone()));
+
+            if matches_all_tokens && total_score > 0 {
+                // Kurulu olanlara veya yüksek puanlılara alaka takviyesi
+                if pkg.installed {
+                    total_score += 3;
+                }
+                if pkg.rating > 4.0 {
+                    total_score += 2;
+                }
+                results.push((total_score, pkg.clone()));
             }
         }
-        results.sort_by(|a, b| b.0.cmp(&a.0));
+
+        results.sort_by(|a, b| {
+            b.0.cmp(&a.0).then_with(|| a.1.display_name.to_lowercase().cmp(&b.1.display_name.to_lowercase()))
+        });
+
         results.into_iter().map(|(_, p)| p).collect()
     }
 

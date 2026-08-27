@@ -43,6 +43,11 @@ async function refreshPackages() {
     if (currentCategory !== 'all' && currentCategory !== 'updates' && currentCategory !== 'settings' && currentCategory !== 'about') {
       renderCategoryView(currentCategory);
     }
+    // Refresh search view if search is currently active
+    const activeView = document.querySelector('.view-page.active');
+    if (activeView && activeView.id === 'view-search' && searchState.query) {
+      handleSearch(searchState.query, false);
+    }
   } catch (err) {
     console.error('Failed to refresh packages:', err);
   }
@@ -57,6 +62,18 @@ let currentLanguage = 'tr';
 let activeWorkers = new Map(); // pkgName -> { action, progress }
 let currentDetailPkg = null;   // currently open detail page package name
 let searchDebounceTimer = null;
+
+// ── Search & Filter State ──
+const searchState = {
+  query: '',
+  type: 'all',        // 'all', 'gui', 'lib'
+  category: 'all',    // 'all', 'development', 'graphics', etc.
+  source: 'all',      // 'all', 'luppo', 'flatpak'
+  status: 'all',      // 'all', 'installed', 'not_installed', 'updatable'
+  sort: 'relevance',  // 'relevance', 'name_asc', 'name_desc', 'rating', 'downloads'
+  rawResults: [],
+  filteredResults: []
+};
 const i18n = {
   en: {
     software_center: "Software Center",
@@ -172,6 +189,31 @@ const i18n = {
     about_developer: "Developed by Antolun",
     about_website: "Visit Website",
     about_license: "License: GNU General Public License v3.0",
+    filter_all_types: "All Types",
+    filter_apps_only: "Applications",
+    filter_pkgs_only: "Libraries & Packages",
+    filter_all_sources: "All Sources",
+    filter_source_luppo: "Luppo Repo",
+    filter_source_flatpak: "Flatpak",
+    filter_all_status: "All Statuses",
+    filter_status_installed: "Installed",
+    filter_status_not_installed: "Not Installed",
+    filter_status_updatable: "Has Update",
+    filter_all_categories: "All Categories",
+    sort_by: "Sort by",
+    sort_relevance: "Relevance",
+    sort_name_asc: "Name (A-Z)",
+    sort_name_desc: "Name (Z-A)",
+    sort_rating: "Rating",
+    sort_downloads: "Downloads",
+    clear_filters: "Clear Filters",
+    no_search_results: "No matching applications or packages found.",
+    no_search_results_hint: "Try searching for a different keyword or reset active filters.",
+    search_results_count: "{count} results found",
+    search_clear_btn: "Clear search",
+    recent_searches: "Recent Searches",
+    clear_history: "Clear History",
+    quick_filters: "Popular Searches",
   },
   tr: {
     software_center: "Yazılım Merkezi",
@@ -192,7 +234,7 @@ const i18n = {
     nav_about: "Hakkında",
     all_applications: "Tüm Uygulamalar",
     packages: "Paketler",
-    search_placeholder: "Uygulama ara...",
+    search_placeholder: "Uygulama veya paket ara... (Ctrl+F)",
     search_results_title: "Arama Sonuçları...",
     results_for: '"{query}" için sonuçlar',
     unknown_developer: "Bilinmeyen Geliştirici",
@@ -288,6 +330,31 @@ const i18n = {
     about_developer: "Antolun tarafından geliştirilmiştir",
     about_website: "Web Sitesini Ziyaret Et",
     about_license: "Lisans: GNU Genel Kamu Lisansı v3.0",
+    filter_all_types: "Tüm Türler",
+    filter_apps_only: "Uygulamalar",
+    filter_pkgs_only: "Kütüphaneler & Paketler",
+    filter_all_sources: "Tüm Kaynaklar",
+    filter_source_luppo: "Luppo Deposu",
+    filter_source_flatpak: "Flatpak",
+    filter_all_status: "Tüm Durumlar",
+    filter_status_installed: "Kurulu",
+    filter_status_not_installed: "Kurulu Değil",
+    filter_status_updatable: "Güncellemesi Var",
+    filter_all_categories: "Tüm Kategoriler",
+    sort_by: "Sırala",
+    sort_relevance: "En Alakalı",
+    sort_name_asc: "İsim (A-Z)",
+    sort_name_desc: "İsim (Z-A)",
+    sort_rating: "Puanlama",
+    sort_downloads: "İndirme Sayısı",
+    clear_filters: "Filtreleri Temizle",
+    no_search_results: "Aradığınız kriterlere uygun uygulama veya paket bulunamadı.",
+    no_search_results_hint: "Farklı bir arama terimi deneyebilir veya aktif filtreleri sıfırlayabilirsiniz.",
+    search_results_count: "{count} sonuç bulundu",
+    search_clear_btn: "Aramayı temizle",
+    recent_searches: "Son Aramalar",
+    clear_history: "Geçmişi Temizle",
+    quick_filters: "Popüler Aramalar",
   }
 };
 
@@ -808,26 +875,278 @@ function renderInstalledView() {
   renderLazyGrid('installed-grid', () => installed, true);
 }
 
-// ── Search Handling ──
-async function handleSearch(query) {
-  if (!query || !query.trim()) {
+// ── Search History & Suggestions ──
+const SEARCH_HISTORY_KEY = 'lupus_search_history';
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function getSearchHistory() {
+  try {
+    const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function addSearchHistory(term) {
+  if (!term || !term.trim()) return;
+  const clean = term.trim();
+  let history = getSearchHistory().filter(item => item.toLowerCase() !== clean.toLowerCase());
+  history.unshift(clean);
+  if (history.length > 6) history = history.slice(0, 6);
+  try {
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
+  } catch (e) {}
+  renderSearchHistory();
+}
+
+function removeSearchHistory(term) {
+  let history = getSearchHistory().filter(item => item !== term);
+  try {
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
+  } catch (e) {}
+  renderSearchHistory();
+}
+
+function clearSearchHistory() {
+  try {
+    localStorage.removeItem(SEARCH_HISTORY_KEY);
+  } catch (e) {}
+  renderSearchHistory();
+}
+
+function renderSearchHistory() {
+  const container = document.getElementById('recent-searches-list');
+  const section = document.getElementById('recent-searches-section');
+  if (!container || !section) return;
+
+  const history = getSearchHistory();
+  if (history.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = 'flex';
+  container.innerHTML = '';
+
+  history.forEach(term => {
+    const item = document.createElement('div');
+    item.className = 'recent-search-item';
+    item.innerHTML = `
+      <div class="recent-search-left">
+        <img src="assets/icons/plasma-search.svg" class="recent-search-icon" alt="">
+        <span>${escapeHtml(term)}</span>
+      </div>
+      <button class="recent-search-del" title="${tr('btn_remove')}">✕</button>
+    `;
+    item.onclick = (e) => {
+      if (e.target.closest('.recent-search-del')) return;
+      const input = document.getElementById('search-input');
+      if (input) {
+        input.value = term;
+        handleSearch(term, true);
+        hideSearchSuggestions();
+      }
+    };
+    const delBtn = item.querySelector('.recent-search-del');
+    if (delBtn) {
+      delBtn.onclick = (e) => {
+        e.stopPropagation();
+        removeSearchHistory(term);
+      };
+    }
+    container.appendChild(item);
+  });
+}
+
+function showSearchSuggestions() {
+  renderSearchHistory();
+  const popover = document.getElementById('search-suggestions');
+  if (popover) {
+    popover.style.display = 'flex';
+  }
+}
+
+function hideSearchSuggestions() {
+  const popover = document.getElementById('search-suggestions');
+  if (popover) {
+    popover.style.display = 'none';
+  }
+}
+
+// ── Search & Filter Handling ──
+async function handleSearch(query, saveToHistory = false) {
+  const cleanQuery = (query || '').trim();
+  searchState.query = cleanQuery;
+
+  // Clear button visibility
+  const clearBtn = document.getElementById('btn-search-clear');
+  if (clearBtn) {
+    clearBtn.style.display = cleanQuery.length > 0 ? 'flex' : 'none';
+  }
+
+  if (!cleanQuery) {
+    hideSearchSuggestions();
     if (currentCategory === 'all') {
       switchView('view-discover');
+    } else if (currentCategory === 'updates') {
+      switchView('view-installed');
+    } else if (currentCategory === 'settings') {
+      switchView('view-settings');
+    } else if (currentCategory === 'about') {
+      switchView('view-about');
     } else {
       switchView('view-category');
     }
     return;
   }
-  const results = await invoke('search_packages', { query: query.trim() });
-  document.getElementById('search-results-title').textContent = tr('results_for', { query });
 
-  const guiApps = results.filter(p => p.is_a !== 'library');
-  const libPkgs = results.filter(p => p.is_a === 'library');
+  if (saveToHistory) {
+    addSearchHistory(cleanQuery);
+  }
 
-  renderLazyGrid('search-apps-grid', () => (guiApps.length > 0 ? guiApps : results), false);
-  renderLazyGrid('search-pkgs-grid', () => libPkgs, false);
+  try {
+    const results = await invoke('search_packages', { query: cleanQuery });
+    searchState.rawResults = results || [];
+    applySearchFilters();
+    switchView('view-search');
+  } catch (err) {
+    console.error('Search failed:', err);
+  }
+}
 
-  switchView('view-search');
+function applySearchFilters() {
+  let list = [...searchState.rawResults];
+
+  // 1. Category filter
+  if (searchState.category && searchState.category !== 'all') {
+    list = list.filter(p => p.category && p.category.toLowerCase() === searchState.category.toLowerCase());
+  }
+
+  // 2. Source / Repo filter
+  if (searchState.source === 'luppo') {
+    list = list.filter(p => !p.is_flatpak);
+  } else if (searchState.source === 'flatpak') {
+    list = list.filter(p => p.is_flatpak);
+  }
+
+  // 3. Status filter
+  if (searchState.status === 'installed') {
+    list = list.filter(p => p.installed);
+  } else if (searchState.status === 'not_installed') {
+    list = list.filter(p => !p.installed);
+  } else if (searchState.status === 'updatable') {
+    list = list.filter(p => p.has_update);
+  }
+
+  // Calculate Tab Counts for GUI vs Lib in current filtered subset
+  const countAll = list.length;
+  const countGui = list.filter(p => p.is_a !== 'library').length;
+  const countLib = list.filter(p => p.is_a === 'library').length;
+
+  const badgeAll = document.getElementById('badge-count-all');
+  const badgeGui = document.getElementById('badge-count-gui');
+  const badgeLib = document.getElementById('badge-count-lib');
+  if (badgeAll) badgeAll.textContent = countAll;
+  if (badgeGui) badgeGui.textContent = countGui;
+  if (badgeLib) badgeLib.textContent = countLib;
+
+  // 4. Type Tab filter
+  if (searchState.type === 'gui') {
+    list = list.filter(p => p.is_a !== 'library');
+  } else if (searchState.type === 'lib') {
+    list = list.filter(p => p.is_a === 'library');
+  }
+
+  // 5. Sorting
+  if (searchState.sort === 'name_asc') {
+    list.sort((a, b) => formatPackageDisplayName(a).localeCompare(formatPackageDisplayName(b), currentLanguage));
+  } else if (searchState.sort === 'name_desc') {
+    list.sort((a, b) => formatPackageDisplayName(b).localeCompare(formatPackageDisplayName(a), currentLanguage));
+  } else if (searchState.sort === 'rating') {
+    list.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+  } else if (searchState.sort === 'downloads') {
+    list.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
+  }
+  // If 'relevance', keep backend relevance score order
+
+  searchState.filteredResults = list;
+
+  // Header Title & Count Badge
+  const titleEl = document.getElementById('search-results-title');
+  if (titleEl) {
+    titleEl.textContent = tr('results_for', { query: searchState.query });
+  }
+  const countBadgeEl = document.getElementById('search-results-count-badge');
+  if (countBadgeEl) {
+    countBadgeEl.textContent = tr('search_results_count', { count: list.length });
+  }
+
+  // Reset Filters Button Visibility
+  const hasActiveFilters = searchState.type !== 'all' || 
+                           searchState.category !== 'all' || 
+                           searchState.source !== 'all' || 
+                           searchState.status !== 'all' || 
+                           searchState.sort !== 'relevance';
+
+  const resetBtn = document.getElementById('btn-reset-filters');
+  if (resetBtn) {
+    resetBtn.style.display = hasActiveFilters ? 'inline-flex' : 'none';
+  }
+
+  // Empty State vs Grid Render
+  const emptyState = document.getElementById('search-empty-state');
+  const grid = document.getElementById('search-results-grid');
+
+  if (list.length === 0) {
+    if (emptyState) emptyState.style.display = 'flex';
+    if (grid) {
+      resetLazyGrid('search-results-grid');
+      grid.innerHTML = '';
+    }
+  } else {
+    if (emptyState) emptyState.style.display = 'none';
+    renderLazyGrid('search-results-grid', () => searchState.filteredResults, false);
+  }
+}
+
+function resetSearchFilters() {
+  searchState.type = 'all';
+  searchState.category = 'all';
+  searchState.source = 'all';
+  searchState.status = 'all';
+  searchState.sort = 'relevance';
+
+  // Sync UI controls
+  document.querySelectorAll('.filter-tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-type') === 'all');
+  });
+
+  const catSelect = document.getElementById('filter-category');
+  if (catSelect) catSelect.value = 'all';
+
+  const srcSelect = document.getElementById('filter-source');
+  if (srcSelect) srcSelect.value = 'all';
+
+  const stSelect = document.getElementById('filter-status');
+  if (stSelect) stSelect.value = 'all';
+
+  const sortSelect = document.getElementById('filter-sort');
+  if (sortSelect) sortSelect.value = 'relevance';
+
+  applySearchFilters();
+}
+
+function clearSearch() {
+  const input = document.getElementById('search-input');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  handleSearch('');
 }
 
 // ── Sidebar Categories Initialization ──
@@ -1001,22 +1320,152 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Search Input (Real-time debounced & Enter key)
+  // ── Search Input & Suggestions Popover ──
   const searchInput = document.getElementById('search-input');
+  const searchClearBtn = document.getElementById('btn-search-clear');
+  const searchBoxWrap = document.getElementById('search-box-wrap');
+
   if (searchInput) {
-    searchInput.oninput = () => {
+    // Focus -> show suggestions if empty or has history
+    searchInput.addEventListener('focus', () => {
+      if (!searchInput.value.trim()) {
+        showSearchSuggestions();
+      }
+    });
+
+    searchInput.addEventListener('input', () => {
+      const val = searchInput.value;
+      if (searchClearBtn) {
+        searchClearBtn.style.display = val.length > 0 ? 'flex' : 'none';
+      }
+      if (val.trim()) {
+        hideSearchSuggestions();
+      } else {
+        showSearchSuggestions();
+      }
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(() => {
-        handleSearch(searchInput.value);
-      }, 250);
-    };
-    searchInput.onkeydown = (e) => {
+        handleSearch(val, false);
+      }, 200);
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         clearTimeout(searchDebounceTimer);
-        handleSearch(searchInput.value);
+        handleSearch(searchInput.value, true);
+        hideSearchSuggestions();
+        searchInput.blur();
+      } else if (e.key === 'Escape') {
+        hideSearchSuggestions();
+        if (searchInput.value) {
+          clearSearch();
+        }
       }
+    });
+  }
+
+  // Clear search button
+  if (searchClearBtn) {
+    searchClearBtn.onclick = (e) => {
+      e.stopPropagation();
+      clearSearch();
     };
   }
+
+  // Close suggestions when clicking outside
+  document.addEventListener('click', (e) => {
+    if (searchBoxWrap && !searchBoxWrap.contains(e.target)) {
+      hideSearchSuggestions();
+    }
+  });
+
+  // Clear search history button
+  on('btn-clear-search-history', 'click', (e) => {
+    e.stopPropagation();
+    clearSearchHistory();
+  });
+
+  // Quick search tags in popover
+  document.querySelectorAll('.quick-tag').forEach(tag => {
+    tag.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const q = tag.getAttribute('data-query') || tag.textContent.trim();
+      if (searchInput) {
+        searchInput.value = q;
+        handleSearch(q, true);
+        hideSearchSuggestions();
+      }
+    });
+  });
+
+  // Global Keyboard shortcuts: Ctrl+F, Cmd+F, / to focus search
+  window.addEventListener('keydown', (e) => {
+    const isEditing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      if (searchInput) {
+        searchInput.focus();
+        searchInput.select();
+      }
+    } else if (e.key === '/' && !isEditing) {
+      e.preventDefault();
+      if (searchInput) {
+        searchInput.focus();
+        searchInput.select();
+      }
+    }
+  });
+
+  // ── Search Filters & Sorting Controls ──
+  // Filter Type Tabs (All / GUI Apps / Libs & Packages)
+  document.querySelectorAll('.filter-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      searchState.type = btn.getAttribute('data-type') || 'all';
+      applySearchFilters();
+    });
+  });
+
+  // Category Filter Dropdown
+  const filterCat = document.getElementById('filter-category');
+  if (filterCat) {
+    filterCat.addEventListener('change', () => {
+      searchState.category = filterCat.value;
+      applySearchFilters();
+    });
+  }
+
+  // Source / Origin Filter Dropdown
+  const filterSrc = document.getElementById('filter-source');
+  if (filterSrc) {
+    filterSrc.addEventListener('change', () => {
+      searchState.source = filterSrc.value;
+      applySearchFilters();
+    });
+  }
+
+  // Status Filter Dropdown
+  const filterStat = document.getElementById('filter-status');
+  if (filterStat) {
+    filterStat.addEventListener('change', () => {
+      searchState.status = filterStat.value;
+      applySearchFilters();
+    });
+  }
+
+  // Sort Order Dropdown
+  const filterSort = document.getElementById('filter-sort');
+  if (filterSort) {
+    filterSort.addEventListener('change', () => {
+      searchState.sort = filterSort.value;
+      applySearchFilters();
+    });
+  }
+
+  // Reset Filters Buttons
+  on('btn-reset-filters', 'click', resetSearchFilters);
+  on('btn-empty-reset-filters', 'click', resetSearchFilters);
 
   // Topbar Settings button
   on('btn-topbar-settings', 'click', () => onNavClick('settings'));
