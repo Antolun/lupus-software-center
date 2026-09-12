@@ -3,13 +3,13 @@
 all: build
 
 build:
-	cd src-tauri && cargo build --release
+	cargo build --release
 
 run:
-	cd src-tauri && cargo run
+	cargo run
 
 package: build
 	./build-luppo.sh
 
 clean:
-	cd src-tauri && cargo clean
+	cargo clean

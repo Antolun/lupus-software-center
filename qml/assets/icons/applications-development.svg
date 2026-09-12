@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <linearGradient id="devGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+  </defs>
+  <polyline points="16 18 22 12 16 6" fill="none" stroke="url(#devGrad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="8 6 2 12 8 18" fill="none" stroke="url(#devGrad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="14" y1="4" x2="10" y2="20" stroke="#f43f5e" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

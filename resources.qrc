@@ -1,0 +1,29 @@
+<RCC>
+    <qresource prefix="/">
+        <file>qml/assets/lupus-software-center.png</file>
+        <file>qml/assets/luppo.png</file>
+        <file>qml/assets/icons/applications-development.svg</file>
+        <file>qml/assets/icons/applications-education.svg</file>
+        <file>qml/assets/icons/applications-games.svg</file>
+        <file>qml/assets/icons/applications-graphics.svg</file>
+        <file>qml/assets/icons/applications-internet.svg</file>
+        <file>qml/assets/icons/applications-multimedia.svg</file>
+        <file>qml/assets/icons/applications-office.svg</file>
+        <file>qml/assets/icons/applications-system.svg</file>
+        <file>qml/assets/icons/applications-utilities.svg</file>
+        <file>qml/assets/icons/download.svg</file>
+        <file>qml/assets/icons/edit-delete.svg</file>
+        <file>qml/assets/icons/edit-find.svg</file>
+        <file>qml/assets/icons/go-next.svg</file>
+        <file>qml/assets/icons/go-previous.svg</file>
+        <file>qml/assets/icons/help-about.svg</file>
+        <file>qml/assets/icons/package-x-generic.svg</file>
+        <file>qml/assets/icons/plasma-search.svg</file>
+        <file>qml/assets/icons/settings-configure.svg</file>
+        <file>qml/assets/icons/view-refresh.svg</file>
+        <file>qml/assets/icons/window-close.svg</file>
+        <file>qml/assets/icons/zoom-in.svg</file>
+        <file>qml/assets/icons/zoom-original.svg</file>
+        <file>qml/assets/icons/zoom-out.svg</file>
+    </qresource>
+</RCC>

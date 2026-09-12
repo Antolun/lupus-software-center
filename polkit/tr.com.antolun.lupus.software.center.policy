@@ -5,7 +5,7 @@
     <vendor_url>https://github.com/Antolun/lupus-software-center</vendor_url>
     <icon_name>lupus-software-center</icon_name>
 
-    <action id="tr.org.luppo.softwarecenter.manage">
+    <action id="com.antolun.lupus.software.center.manage">
         <description>LupuS Software Center Package Operations</description>
         <description xml:lang="tr">LupuS Yazılım Merkezi Paket İşlemleri</description>
         <message>Authentication is required to install, update or remove applications</message>

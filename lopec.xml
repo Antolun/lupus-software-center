@@ -23,13 +23,20 @@
             <Path fileType="data">/usr/share/icons/hicolor/128x128/apps/lupus-software-center.png</Path>
             <Path fileType="config">/etc/udev/rules.d/99-lupus-software-center.rules</Path>
             <Path fileType="data">/usr/share/polkit-1/rules.d/50-lupus-software-center.rules</Path>
-            <Path fileType="data">/usr/share/polkit-1/actions/tr.org.luppo.softwarecenter.policy</Path>
+            <Path fileType="data">/usr/share/polkit-1/actions/tr.com.antolun.lupus.software.center.policy</Path>
             <Path fileType="config">/etc/sudoers.d/50-lupus-software-center</Path>
             <Path fileType="doc">/usr/share/doc/lupus-software-center</Path>
         </Files>
     </Package>
 
     <History>
+        <Update release="7">
+            <Date>2026-09-12</Date>
+            <Version>2.0.6</Version>
+            <Comment>Dynamic language switching: POSIX-compliant locale detection (LANGUAGE > LC_ALL > LC_MESSAGES > LANG), runtime language change without restart, reactive QML tr() bindings, i18n for all completion/cancel messages, fixed Flatpak progress bar, button color scheme sync, rating card removed from detail view</Comment>
+            <Name>Solzic0</Name>
+            <Email>solzic0@yandex.com</Email>
+        </Update>
         <Update release="6">
             <Date>2026-08-27</Date>
             <Version>2.0.5</Version>

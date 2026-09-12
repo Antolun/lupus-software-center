@@ -9,10 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export LUPUS_SOFTWARE_CENTER_SRC_DIR="${SCRIPT_DIR}"
 cd "${SCRIPT_DIR}"
 
-echo "[1/2] Building Rust / Tauri release binary..."
-cd src-tauri
+echo "[1/2] Building Rust / CXX-Qt release binary..."
 cargo build --release
-cd ..
 
 echo "[2/2] Creating Luppo package (.luppo)..."
 if command -v luppo &>/dev/null; then

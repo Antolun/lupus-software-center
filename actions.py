@@ -11,10 +11,8 @@ def install():
     src_dir = os.environ.get("LUPUS_SOFTWARE_CENTER_SRC_DIR", os.getcwd())
 
     possible_bins = [
-        os.path.join(src_dir, "src-tauri/target/release/lupus-software-center"),
         os.path.join(src_dir, "target/release/lupus-software-center"),
         os.path.join(src_dir, "lupus-software-center"),
-        "src-tauri/target/release/lupus-software-center",
         "target/release/lupus-software-center",
         "lupus-software-center",
     ]
@@ -36,11 +34,11 @@ def install():
     if os.path.isfile(desktop_path):
         luppotools.insinto("/usr/share/applications", desktop_path)
 
-    icon_path = os.path.join(src_dir, "src-tauri/icons/128x128.png")
+    icon_path = os.path.join(src_dir, "icons/128x128.png")
     if not os.path.isfile(icon_path):
         icon_path = os.path.join(src_dir, "128x128.png")
     if not os.path.isfile(icon_path):
-        icon_path = "src-tauri/icons/128x128.png"
+        icon_path = "icons/128x128.png"
     if os.path.isfile(icon_path):
         luppotools.insinto("/usr/share/icons/hicolor/128x128/apps", icon_path, "lupus-software-center.png")
 
@@ -58,9 +56,9 @@ def install():
     if os.path.isfile(polkit_rules):
         luppotools.insinto("/usr/share/polkit-1/rules.d", polkit_rules)
 
-    polkit_policy = os.path.join(src_dir, "polkit/tr.org.luppo.softwarecenter.policy")
+    polkit_policy = os.path.join(src_dir, "polkit/tr.com.antolun.lupus.software.center.policy")
     if not os.path.isfile(polkit_policy):
-        polkit_policy = "polkit/tr.org.luppo.softwarecenter.policy"
+        polkit_policy = "polkit/tr.com.antolun.lupus.software.center.policy"
     if os.path.isfile(polkit_policy):
         luppotools.insinto("/usr/share/polkit-1/actions", polkit_policy)
 
