@@ -12,7 +12,7 @@ ApplicationWindow {
     height: 820
     minimumWidth: 1000
     minimumHeight: 620
-    visible: true
+    visible: !backend.isStartMinimized()
     color: Theme.bg
 
     // CXX-Qt Backend Bridge
@@ -92,6 +92,13 @@ ApplicationWindow {
                 loadingOverlay.progress = 1.0
                 initTimer.start()
             }
+        }
+
+        onActivateRequested: {
+            // Another instance was launched — raise this window instead
+            mainWindow.show()
+            mainWindow.raise()
+            mainWindow.requestActivate()
         }
     }
 
@@ -345,7 +352,7 @@ ApplicationWindow {
         id: systemTray
         visible: true
         icon.source: "qrc:/qml/assets/lupus-software-center.png"
-        tooltip: "LupuS Software Center"
+        tooltip: "LupuS " + tr("software_center")
 
         menu: Platform.Menu {
             Platform.MenuItem {
@@ -380,9 +387,14 @@ ApplicationWindow {
     }
 
     onClosing: function(close) {
-        if (mainWindow.appSettings.close_to_tray) {
+        var closeToTray = (mainWindow.appSettings && mainWindow.appSettings.close_to_tray !== undefined)
+                          ? mainWindow.appSettings.close_to_tray : true
+        if (closeToTray) {
             close.accepted = false
             mainWindow.hide()
+        } else {
+            close.accepted = true
+            Qt.quit()
         }
     }
 

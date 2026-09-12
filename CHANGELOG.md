@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [2.0.6] — 2026-09-12
 
 ### Added
+- **Single-instance application guard** — prevents opening duplicate instances using a per-user Unix domain socket (`/tmp/lupus-software-center-$USER.sock`); subsequent launches without `--minimized` raise and activate the existing window
+- **`--minimized` / `-m` startup argument** — launches the application directly into the system tray without displaying the main window on screen (used by system autostart)
+- **System tray title & tooltip localization** — tray item name and tooltip dynamically display `"LupuS Yazılım Merkezi"` (TR) or `"LupuS Software Center"` (EN) based on locale; emits `NewTitle` D-Bus signal (`org.kde.StatusNotifierItem.NewTitle`) on runtime language changes for immediate updates in KDE Plasma and other desktop trays
+- `isStartMinimized` QML invokable on `BackendBridge`
 - `setLanguage` QML invokable on `BackendBridge` — language can now be changed at runtime without restart
 - `detect_system_lang()` made `pub` and POSIX-compliant: checks `LANGUAGE` → `LC_ALL` → `LC_MESSAGES` → `LANG` in order (supports colon-separated `LANGUAGE` lists, e.g. `en_US:en`)
 - `languageChangeTrigger` reactive property in `Main.qml` — forces re-evaluation of all `tr()` bindings immediately when the language setting is changed
@@ -16,6 +20,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Startup language initialization in `main.rs`: `settings::load_settings()` + `i18n::set_lang()` are called before the QML engine starts
 
 ### Fixed
+- **"Run in Background When Closed" (`close_to_tray`) setting had no effect** — closing the window now properly calls `Qt.quit()` to exit the application when the setting is unchecked, and hides to tray when checked
+- **System tray displaying raw binary name `lupus-software-center`** — application name (`QCoreApplication::setApplicationName`) and display name (`QGuiApplication::setApplicationDisplayName`) are now correctly initialized with the localized application title
 - **Settings language change leaving parts of the UI in Turkish** — all QML text bindings are now reactive and refresh instantly on language switch
 - `detect_system_lang()` was ignoring the `LANGUAGE` environment variable (used by KDE/GNOME to set UI language) and relying only on `LANG`; this caused the app to start in Turkish even when the desktop was set to English
 - Default language in `AppSettings` was hardcoded to `"tr"` — now uses `detect_system_lang()` to respect the system locale on first run

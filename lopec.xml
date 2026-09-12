@@ -33,7 +33,7 @@
         <Update release="7">
             <Date>2026-09-12</Date>
             <Version>2.0.6</Version>
-            <Comment>Dynamic language switching: POSIX-compliant locale detection (LANGUAGE > LC_ALL > LC_MESSAGES > LANG), runtime language change without restart, reactive QML tr() bindings, i18n for all completion/cancel messages, fixed Flatpak progress bar, button color scheme sync, rating card removed from detail view</Comment>
+            <Comment>Dynamic language switching: POSIX-compliant locale detection (LANGUAGE > LC_ALL > LC_MESSAGES > LANG), runtime language change without restart, reactive QML tr() bindings, i18n for all completion/cancel messages; Single-instance lock with window raise on subsequent launch; --minimized startup flag for tray-only launch; system tray localized title/tooltip (LupuS Yazılım Merkezi / LupuS Software Center) with D-Bus NewTitle signal; fixed close_to_tray setting to properly quit on window close when disabled; fixed Flatpak progress bar; button color scheme sync; rating card removed from detail view</Comment>
             <Name>Solzic0</Name>
             <Email>solzic0@yandex.com</Email>
         </Update>

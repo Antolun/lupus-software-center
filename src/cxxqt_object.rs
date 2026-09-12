@@ -63,6 +63,10 @@ pub mod qobject {
         #[cxx_name = "packagesChanged"]
         fn packages_changed(self: Pin<&mut Self>);
 
+        #[qsignal]
+        #[cxx_name = "activateRequested"]
+        fn activate_requested(self: Pin<&mut Self>);
+
         #[qinvokable]
         #[cxx_name = "getAvailablePackages"]
         fn get_available_packages(&self) -> QString;
@@ -130,6 +134,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "getAppVersion"]
         fn get_app_version(&self) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "isStartMinimized"]
+        fn is_start_minimized(&self) -> bool;
 
         #[qinvokable]
         #[cxx_name = "loadPackagesAsync"]
@@ -502,16 +510,31 @@ impl qobject::BackendBridge {
     pub fn set_language(&self, lang: &QString) {
         let l = lang.to_string();
         i18n::set_lang(&l);
+        let title = format!("LupuS {}", i18n::tr("software_center"));
+        glib::set_application_name(&title);
+        if let Ok(c_title) = std::ffi::CString::new(title) {
+            extern "C" {
+                fn set_application_title(title: *const std::ffi::c_char);
+            }
+            unsafe {
+                set_application_title(c_title.as_ptr());
+            }
+        }
     }
 
     pub fn get_app_version(&self) -> QString {
         QString::from(crate::backend::VERSION)
     }
 
+    pub fn is_start_minimized(&self) -> bool {
+        crate::is_start_minimized()
+    }
+
     pub fn load_packages_async(self: Pin<&mut Self>) {
         let qt_thread = self.qt_thread();
         let backend_arc = self.rust().backend.clone();
 
+        // ── Package loading thread ──
         std::thread::spawn(move || {
             let mut temp_backend = {
                 match backend_arc.lock() {
@@ -538,6 +561,40 @@ impl qobject::BackendBridge {
             qt_thread.queue(move |mut qobj| {
                 qobj.as_mut().packages_changed();
             }).ok();
+        });
+
+        // ── Single-instance socket listener thread ──
+        // Listens on the Unix socket; when a second instance connects and sends "activate",
+        // emits activateRequested so QML can raise the window.
+        let qt_thread2 = self.qt_thread();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            use std::os::unix::net::UnixListener;
+
+            let socket_path = format!(
+                "/tmp/lupus-software-center-{}.sock",
+                std::env::var("USER").unwrap_or_else(|_| "user".into())
+            );
+
+            // Remove stale socket if any (the C++ side also does this, but belt-and-suspenders)
+            let _ = std::fs::remove_file(&socket_path);
+
+            let listener = match UnixListener::bind(&socket_path) {
+                Ok(l) => l,
+                Err(_) => return,
+            };
+
+            for stream in listener.incoming() {
+                if let Ok(mut s) = stream {
+                    let mut buf = String::new();
+                    let _ = s.read_to_string(&mut buf);
+                    if buf.trim() == "activate" {
+                        qt_thread2.queue(move |mut qobj| {
+                            qobj.as_mut().activate_requested();
+                        }).ok();
+                    }
+                }
+            }
         });
     }
 }

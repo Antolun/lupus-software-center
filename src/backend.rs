@@ -387,7 +387,7 @@ impl LuppoBackend {
             return;
         }
         let output = Command::new("flatpak")
-            .args(["list", "--app", "--columns=application,name,version,branch,origin,ref"])
+            .args(["list", "--columns=application,name,version,branch,origin,ref"])
             .output();
 
         if let Ok(out) = output {

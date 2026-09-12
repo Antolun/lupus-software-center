@@ -19,6 +19,7 @@ fn main() {
             .qml_file("qml/ImageModal.qml")
             .qml_file("qml/LoadingOverlay.qml"),
     )
+    .qt_module("DBus")
     .qt_module("Network")
     .qt_module("Quick")
     .qt_module("QuickControls2")
